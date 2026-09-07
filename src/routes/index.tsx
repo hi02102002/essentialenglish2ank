@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   SparklesIcon,
   BookOpenIcon,
@@ -16,8 +16,18 @@ import {
   CheckCircle2Icon,
   RefreshCwIcon,
   LayersIcon,
+  LockIcon,
+  KeyRoundIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from 'lucide-react'
-import { analyzeLesson, generateVocabulary } from '@/server/functions'
+import {
+  analyzeLesson,
+  generateVocabulary,
+  checkAuthRequirement,
+  verifyPassword,
+  verifySessionToken,
+} from '@/server/functions'
 import { getBingImageUrl } from '@/lib/bing-image'
 import { getYoudaoDictVoiceUrl } from '@/lib/youdao'
 import type { LessonAnalysis, VocabularyCard } from '@/lib/types'
@@ -38,6 +48,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Spinner } from '@/components/ui/spinner'
 
 const DEFAULT_URL =
   'https://www.essentialenglish.review/apps/english-vocabulary-in-use-pre-intermediate-and-intermediate/unit-9-the-body-and-movement#8'
@@ -87,6 +98,71 @@ function HomePage() {
 
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+
+  // Authentication State
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const [authRequired, setAuthRequired] = useState(false)
+  const [inputPassword, setInputPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [authError, setAuthError] = useState('')
+  const [isVerifying, setIsVerifying] = useState(false)
+
+  useEffect(() => {
+    async function initAuth() {
+      try {
+        const { required } = await checkAuthRequirement()
+        setAuthRequired(required)
+        if (!required) {
+          setIsAuthenticated(true)
+          return
+        }
+
+        const savedToken = sessionStorage.getItem('anki_auth_token')
+        if (savedToken) {
+          const { valid } = await verifySessionToken({ data: { token: savedToken } })
+          if (valid) {
+            setIsAuthenticated(true)
+            return
+          }
+          sessionStorage.removeItem('anki_auth_token')
+        }
+        setIsAuthenticated(false)
+      } catch (err) {
+        console.error('Auth initialization error', err)
+        setIsAuthenticated(false)
+      }
+    }
+    void initAuth()
+  }, [])
+
+  async function onUnlock(e?: React.FormEvent) {
+    if (e) e.preventDefault()
+    if (!inputPassword.trim()) {
+      setAuthError('Vui lòng nhập mật khẩu.')
+      return
+    }
+    setAuthError('')
+    setIsVerifying(true)
+    try {
+      const res = await verifyPassword({ data: { password: inputPassword } })
+      if (res.success && res.token) {
+        sessionStorage.setItem('anki_auth_token', res.token)
+        setIsAuthenticated(true)
+        setInputPassword('')
+      } else {
+        setAuthError(res.message || 'Mật khẩu không chính xác.')
+      }
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Lỗi xác thực mật khẩu.')
+    } finally {
+      setIsVerifying(false)
+    }
+  }
+
+  function onLock() {
+    sessionStorage.removeItem('anki_auth_token')
+    setIsAuthenticated(false)
+  }
 
   const selectedWords = useMemo(
     () => allWords.filter((w) => checked[w] !== false),
@@ -227,21 +303,118 @@ function HomePage() {
     }
   }
 
+  // Loading state while verifying existing session token
+  if (isAuthenticated === null) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Spinner className="size-8 text-primary" />
+          <span className="text-sm text-muted-foreground animate-pulse">
+            Đang kiểm tra quyền truy cập…
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  // Lock Screen: blocked until correct password is submitted
+  if (!isAuthenticated) {
+    return (
+      <main className="mx-auto flex min-h-[85vh] max-w-md items-center justify-center px-4 py-12">
+        <Card className="w-full border-border/80 bg-card/80 shadow-2xl backdrop-blur-xl">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto mb-3 flex size-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary shadow-xs">
+              <LockIcon className="size-7" aria-hidden="true" />
+            </div>
+            <CardTitle className="text-2xl font-bold">Xác thực quyền truy cập</CardTitle>
+            <CardDescription>
+              Vui lòng nhập mật khẩu bảo vệ để truy cập Anki Deck Builder.
+            </CardDescription>
+          </CardHeader>
+          <CardPanel>
+            <form onSubmit={onUnlock} className="flex flex-col gap-4 mt-2">
+              {authError && (
+                <div className="flex items-center gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                  <AlertCircleIcon className="size-4 shrink-0" aria-hidden="true" />
+                  <span>{authError}</span>
+                </div>
+              )}
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="gate-password"
+                  className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
+                >
+                  Mật khẩu hệ thống
+                </label>
+                <div className="relative">
+                  <Input
+                    id="gate-password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={inputPassword}
+                    onChange={(e) => setInputPassword(e.target.value)}
+                    placeholder="Nhập mật khẩu..."
+                    className="pr-10"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                    title={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    {showPassword ? (
+                      <EyeOffIcon className="size-4" aria-hidden="true" />
+                    ) : (
+                      <EyeIcon className="size-4" aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
+              </div>
+              <Button
+                type="submit"
+                loading={isVerifying}
+                className="w-full gap-2 font-semibold mt-1"
+              >
+                <KeyRoundIcon className="size-4" aria-hidden="true" />
+                Mở khóa ứng dụng
+              </Button>
+            </form>
+          </CardPanel>
+        </Card>
+      </main>
+    )
+  }
+
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 pb-32 sm:px-6 sm:py-12">
       {/* Top Brand Header */}
       <header className="mb-8 flex flex-col gap-3 sm:mb-12">
-        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          <Badge variant="outline" className="gap-1.5 py-0.5 text-xs font-mono">
-            <SparklesIcon className="size-3 text-primary" aria-hidden="true" />
-            TanStack AI
-          </Badge>
-          <span className="text-border">/</span>
-          <Badge variant="secondary" className="py-0.5 text-xs font-mono">
-            coss.com/ui
-          </Badge>
-          <span className="text-border">/</span>
-          <span>Anki .apkg Generator</span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <Badge variant="outline" className="gap-1.5 py-0.5 text-xs font-mono">
+              <SparklesIcon className="size-3 text-primary" aria-hidden="true" />
+              TanStack AI
+            </Badge>
+            <span className="text-border">/</span>
+            <Badge variant="secondary" className="py-0.5 text-xs font-mono">
+              coss.com/ui
+            </Badge>
+            <span className="text-border">/</span>
+            <span>Anki .apkg Generator</span>
+          </div>
+
+          {authRequired && (
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={onLock}
+              className="gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+              title="Khóa ứng dụng"
+            >
+              <LockIcon className="size-3" aria-hidden="true" />
+              Khóa ứng dụng
+            </Button>
+          )}
         </div>
 
         <h1 className="font-heading text-3xl font-extrabold tracking-tight sm:text-5xl text-foreground">
