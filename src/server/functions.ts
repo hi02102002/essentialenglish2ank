@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import { analyzeLessonUrl } from './lesson'
-import { enrichVocabulary } from './ai'
+import { enrichVocabulary, enrichNotes } from './ai'
 import { assertAuthorized, isAuthorized } from './auth'
 
 export const checkAuthRequirement = createServerFn({ method: 'GET' }).handler(
@@ -46,13 +46,19 @@ export const verifySessionToken = createServerFn({ method: 'POST' })
 export const analyzeLesson = createServerFn({ method: 'POST' })
   .validator(
     z.object({
-      url: z.string().url(),
+      url: z.string().optional(),
+      bookSlug: z.string().optional(),
+      unitNumber: z.number().int().min(1).max(200).optional(),
       token: z.string().optional(),
     }),
   )
   .handler(({ data }) => {
     assertAuthorized(data.token)
-    return analyzeLessonUrl(data.url)
+    return analyzeLessonUrl({
+      url: data.url,
+      bookSlug: data.bookSlug,
+      unitNumber: data.unitNumber,
+    })
   })
 
 export const generateVocabulary = createServerFn({ method: 'POST' })
@@ -66,3 +72,24 @@ export const generateVocabulary = createServerFn({ method: 'POST' })
     assertAuthorized(data.token)
     return enrichVocabulary(data.words)
   })
+
+export const generateNotes = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      notes: z
+        .array(
+          z.object({
+            title: z.string(),
+            content: z.array(z.string()),
+          }),
+        )
+        .min(1)
+        .max(20),
+      token: z.string().optional(),
+    }),
+  )
+  .handler(({ data }) => {
+    assertAuthorized(data.token)
+    return enrichNotes(data.notes)
+  })
+

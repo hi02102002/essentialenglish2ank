@@ -1,7 +1,7 @@
 import { chat } from '@tanstack/ai'
 import { openaiCompatibleText } from '@tanstack/ai-openai/compatible'
 import { z } from 'zod'
-import type { GeneratedVocabulary } from '@/lib/types'
+import type { GeneratedNote, GeneratedVocabulary } from '@/lib/types'
 
 export const FlashcardSchema = z.object({
   word: z.string().describe('The English vocabulary word or phrase'),
@@ -117,3 +117,87 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
 
   return cards
 }
+
+export const NoteSchema = z.object({
+  title: z.string().describe('Clear topic title for this note or rule, e.g. "Body movement expressions"'),
+  content: z.array(z.string()).describe('List of key expressions, phrases, or bullet rules'),
+  vietnameseExplanation: z.string().describe('Concise explanation in Vietnamese of usage and meaning for learners'),
+  example: z.string().describe('A natural, practical example sentence demonstrating the usage in context'),
+})
+
+export const NotesOutputSchema = z.object({
+  notes: z.array(NoteSchema).describe('List of enriched language notes matching the input items'),
+})
+
+export async function enrichNotes(
+  rawNotes: Array<{ title: string; content: string[] }>,
+): Promise<GeneratedNote[]> {
+  if (!rawNotes.length) return []
+
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
+  }
+
+  const baseURL = process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
+  const model = process.env.OPENAI_MODEL || 'gpt-5-6'
+
+  const adapter = openaiCompatibleText(model, {
+    baseURL,
+    apiKey,
+  })
+
+  const systemPrompt =
+    'You create high-yield language study notes from English textbook sections for Vietnamese learners. For each section, summarize the key expressions, collocations, or grammar rules into clean bullet items. Provide a clear, concise Vietnamese explanation (vietnameseExplanation) explaining when and how to use them. Provide a realistic, memorable example sentence (example) in English showing these phrases in context.\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"title": string, "content": string[], "vietnameseExplanation": string, "example": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+
+  const userPrompt = `Enrich the following ${rawNotes.length} language notes for Vietnamese learners. Return JSON {"notes": [...]}:\n${rawNotes
+    .map(
+      (n, i) =>
+        `### Note ${i + 1}: ${n.title}\nRaw content:\n${n.content.map((c) => `- ${c}`).join('\n')}`,
+    )
+    .join('\n\n')}`
+
+  let rawOutputNotes: z.infer<typeof NoteSchema>[] = []
+
+  try {
+    const res = await chat({
+      adapter,
+      systemPrompts: [systemPrompt],
+      messages: [{ role: 'user', content: userPrompt }],
+      outputSchema: NotesOutputSchema,
+    })
+    rawOutputNotes = res.notes || []
+  } catch (err: any) {
+    try {
+      const textOutput = await chat({
+        adapter,
+        systemPrompts: [systemPrompt],
+        messages: [{ role: 'user', content: userPrompt }],
+        stream: false,
+      })
+      const cleaned = extractJson(textOutput)
+      const parsed = JSON.parse(cleaned)
+      const validated = NotesOutputSchema.parse(
+        Array.isArray(parsed) ? { notes: parsed } : parsed,
+      )
+      rawOutputNotes = validated.notes
+    } catch (fallbackErr: any) {
+      throw new Error(
+        `Failed to enrich notes using TanStack AI: ${err?.message || fallbackErr?.message || err}`,
+      )
+    }
+  }
+
+  return rawNotes.map((orig, index) => {
+    const generated = rawOutputNotes[index]
+    return {
+      title: String(generated?.title || orig.title).trim(),
+      content: Array.isArray(generated?.content) && generated.content.length > 0
+        ? generated.content.map((c) => String(c).trim())
+        : orig.content,
+      vietnameseExplanation: String(generated?.vietnameseExplanation || '').trim(),
+      example: String(generated?.example || orig.content[0] || '').trim(),
+    }
+  })
+}
+

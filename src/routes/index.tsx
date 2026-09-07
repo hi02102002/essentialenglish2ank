@@ -20,17 +20,28 @@ import {
   KeyRoundIcon,
   EyeIcon,
   EyeOffIcon,
+  BookmarkIcon,
+  CompassIcon,
+  InfoIcon,
 } from 'lucide-react'
 import {
   analyzeLesson,
   generateVocabulary,
+  generateNotes,
   checkAuthRequirement,
   verifyPassword,
   verifySessionToken,
 } from '@/server/functions'
+import { PRESET_BOOKS } from '@/server/lesson'
 import { getBingImageUrl } from '@/lib/bing-image'
 import { getYoudaoDictVoiceUrl } from '@/lib/youdao'
-import type { LessonAnalysis, VocabularyCard } from '@/lib/types'
+import type {
+  AnyAnkiCard,
+  ExtractedNote,
+  LessonAnalysis,
+  NoteCard,
+  VocabularyCard,
+} from '@/lib/types'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -79,19 +90,39 @@ function parseCustomWords(text: string): string[] {
 
 function HomePage() {
   const [step, setStep] = useState<1 | 2 | 3>(1)
-  const [inputMode, setInputMode] = useState<'url' | 'text'>('url')
+  const [inputMode, setInputMode] = useState<'preset' | 'url' | 'text'>('preset')
+
+  // Preset Mode State
+  const [selectedBook, setSelectedBook] = useState<string>(
+    'english-vocabulary-in-use-pre-intermediate-and-intermediate',
+  )
+  const [unitNumber, setUnitNumber] = useState<number>(9)
+
+  // URL Mode State
   const [url, setUrl] = useState(DEFAULT_URL)
+  const [urlUnitOverride, setUrlUnitOverride] = useState<string>('')
+
+  // Text Mode State
   const [rawText, setRawText] = useState('')
+
+  // Deck Configuration
   const [deckName, setDeckName] = useState(
-    'English Vocabulary in Use::Unit 9: The body and movement',
+    'English Vocabulary in Use: Pre-intermediate & Intermediate::Unit 9: The body and movement',
   )
 
+  // Extracted Lesson State
   const [lesson, setLesson] = useState<LessonAnalysis | null>(null)
   const [allWords, setAllWords] = useState<string[]>([])
-  const [checked, setChecked] = useState<Record<string, boolean>>({})
+  const [checkedWords, setCheckedWords] = useState<Record<string, boolean>>({})
   const [wordFilter, setWordFilter] = useState('')
 
-  const [cards, setCards] = useState<VocabularyCard[]>([])
+  const [allNotes, setAllNotes] = useState<ExtractedNote[]>([])
+  const [checkedNotes, setCheckedNotes] = useState<Record<string, boolean>>({})
+
+  // Generated Cards State
+  const [cards, setCards] = useState<AnyAnkiCard[]>([])
+  const [cardFilterType, setCardFilterType] = useState<'all' | 'vocabulary' | 'note'>('all')
+
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
@@ -165,8 +196,13 @@ function HomePage() {
   }
 
   const selectedWords = useMemo(
-    () => allWords.filter((w) => checked[w] !== false),
-    [allWords, checked],
+    () => allWords.filter((w) => checkedWords[w] !== false),
+    [allWords, checkedWords],
+  )
+
+  const selectedNotes = useMemo(
+    () => allNotes.filter((n) => checkedNotes[n.id] !== false),
+    [allNotes, checkedNotes],
   )
 
   const filteredWords = useMemo(() => {
@@ -180,27 +216,60 @@ function HomePage() {
     [cards],
   )
 
+  const displayedCards = useMemo(() => {
+    if (cardFilterType === 'all') return cards
+    return cards.filter((c) => c.type === cardFilterType)
+  }, [cards, cardFilterType])
+
+  const vocabCardCount = useMemo(
+    () => cards.filter((c) => c.type === 'vocabulary').length,
+    [cards],
+  )
+
+  const noteCardCount = useMemo(
+    () => cards.filter((c) => c.type === 'note').length,
+    [cards],
+  )
+
   function getStoredToken(): string | undefined {
     if (typeof window === 'undefined') return undefined
     return sessionStorage.getItem('anki_auth_token') || undefined
   }
 
-  async function onAnalyzeUrl() {
+  async function onAnalyze() {
     setError('')
-    setStatus('Đang phân tích bài học từ URL…')
+    setStatus('Đang phân tích bài học từ nguồn dữ liệu…')
     setIsAnalyzing(true)
     try {
       const result = await analyzeLesson({
-        data: { url, token: getStoredToken() },
+        data: {
+          bookSlug: inputMode === 'preset' ? selectedBook : undefined,
+          unitNumber:
+            inputMode === 'preset'
+              ? unitNumber
+              : urlUnitOverride.trim()
+                ? Number(urlUnitOverride)
+                : undefined,
+          url: inputMode === 'url' ? url.trim() : undefined,
+          token: getStoredToken(),
+        },
       })
+
       setLesson(result)
       setAllWords(result.words)
-      setChecked(Object.fromEntries(result.words.map((w) => [w, true])))
-      const unitTitle =
+      setCheckedWords(Object.fromEntries(result.words.map((w) => [w, true])))
+
+      setAllNotes(result.notes)
+      setCheckedNotes(Object.fromEntries(result.notes.map((n) => [n.id, true])))
+
+      const bookPrefix = result.bookTitle || 'English Vocabulary in Use'
+      const cleanUnitTitle =
         result.title.replace(/^English Vocabulary in Use\s*[:-]?\s*/i, '').trim() ||
         result.title
-      setDeckName(`English Vocabulary in Use::${unitTitle}`)
-      setStatus(`Đã tìm thấy ${result.words.length} từ vựng trong bài học.`)
+      setDeckName(`${bookPrefix}::${cleanUnitTitle}`)
+      setStatus(
+        `Đã tìm thấy ${result.words.length} từ vựng và ${result.notes.length} phần ghi chú bài học.`,
+      )
       setStep(2)
     } catch (err) {
       setStatus('')
@@ -225,24 +294,52 @@ function HomePage() {
     }
     setLesson(null)
     setAllWords(parsed)
-    setChecked(Object.fromEntries(parsed.map((w) => [w, true])))
+    setCheckedWords(Object.fromEntries(parsed.map((w) => [w, true])))
+    setAllNotes([])
+    setCheckedNotes({})
     setStatus(`Đã ghi nhận ${parsed.length} từ vựng từ danh sách.`)
     setStep(2)
   }
 
   async function onGenerateCards() {
-    if (!selectedWords.length) return
+    if (!selectedWords.length && !selectedNotes.length) {
+      setError('Vui lòng chọn ít nhất 1 từ vựng hoặc 1 mục ghi chú.')
+      return
+    }
     setError('')
-    setStatus(`Đang dùng TanStack AI tạo ${selectedWords.length} thẻ flashcard…`)
+    setStatus(
+      `Đang dùng TanStack AI tạo thẻ cho ${selectedWords.length} từ vựng và ${selectedNotes.length} ghi chú…`,
+    )
     setIsGenerating(true)
+
     try {
-      const generated = await generateVocabulary({
-        data: { words: selectedWords, token: getStoredToken() },
-      })
-      const nextCards = generated.map(
-        (item, index): VocabularyCard => ({
-          id: `${Date.now()}-${index}`,
+      const token = getStoredToken()
+
+      const promises: [Promise<any>, Promise<any>] = [
+        selectedWords.length > 0
+          ? generateVocabulary({ data: { words: selectedWords, token } })
+          : Promise.resolve([]),
+        selectedNotes.length > 0
+          ? generateNotes({
+              data: {
+                notes: selectedNotes.map((n) => ({
+                  title: n.title,
+                  content: n.content,
+                })),
+                token,
+              },
+            })
+          : Promise.resolve([]),
+      ]
+
+      const [generatedVocab, generatedNotes] = await Promise.all(promises)
+
+      const vocabCards: VocabularyCard[] = generatedVocab.map(
+        (item: any, index: number): VocabularyCard => ({
+          type: 'vocabulary',
+          id: `vocab-${Date.now()}-${index}`,
           selected: true,
+          unitNumber: lesson?.unitNumber,
           ...item,
           imageUrl: getBingImageUrl(item.imageQuery),
           wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 1),
@@ -250,8 +347,27 @@ function HomePage() {
           sourceUrl: lesson?.sourceUrl ?? 'custom-input',
         }),
       )
+
+      const noteCards: NoteCard[] = generatedNotes.map(
+        (item: any, index: number): NoteCard => ({
+          type: 'note',
+          id: `note-${Date.now()}-${index}`,
+          selected: true,
+          unitNumber: lesson?.unitNumber,
+          title: item.title,
+          content: item.content,
+          vietnameseExplanation: item.vietnameseExplanation,
+          example: item.example,
+          exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 1),
+          sourceUrl: lesson?.sourceUrl ?? 'custom-input',
+        }),
+      )
+
+      const nextCards: AnyAnkiCard[] = [...vocabCards, ...noteCards]
       setCards(nextCards)
-      setStatus(`Đã tạo thành công ${nextCards.length} thẻ flashcard.`)
+      setStatus(
+        `Đã tạo thành công ${nextCards.length} thẻ (${vocabCards.length} từ vựng, ${noteCards.length} ghi chú).`,
+      )
       setStep(3)
     } catch (err) {
       setStatus('')
@@ -261,25 +377,33 @@ function HomePage() {
         setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
         return
       }
-      setError(err instanceof Error ? err.message : 'Không thể tạo thẻ từ vựng')
+      setError(err instanceof Error ? err.message : 'Không thể tạo thẻ Anki')
     } finally {
       setIsGenerating(false)
     }
   }
 
-  function patchCard(index: number, patch: Partial<VocabularyCard>) {
+  function patchCard(index: number, patch: Partial<AnyAnkiCard>) {
     setCards((current) =>
       current.map((card, i) => {
         if (i !== index) return card
-        const next = { ...card, ...patch }
-        if (patch.imageQuery !== undefined) {
-          next.imageUrl = getBingImageUrl(patch.imageQuery)
-        }
-        if (patch.word !== undefined) {
-          next.wordAudioUrl = getYoudaoDictVoiceUrl(patch.word, 1)
-        }
-        if (patch.example !== undefined) {
-          next.exampleAudioUrl = getYoudaoDictVoiceUrl(patch.example, 1)
+        const next: any = { ...card, ...patch }
+        if (next.type === 'vocabulary') {
+          const vPatch = patch as Partial<VocabularyCard>
+          if (vPatch.imageQuery !== undefined) {
+            next.imageUrl = getBingImageUrl(vPatch.imageQuery)
+          }
+          if (vPatch.word !== undefined) {
+            next.wordAudioUrl = getYoudaoDictVoiceUrl(vPatch.word, 1)
+          }
+          if (vPatch.example !== undefined) {
+            next.exampleAudioUrl = getYoudaoDictVoiceUrl(vPatch.example, 1)
+          }
+        } else if (next.type === 'note') {
+          const nPatch = patch as Partial<NoteCard>
+          if (nPatch.example !== undefined) {
+            next.exampleAudioUrl = getYoudaoDictVoiceUrl(nPatch.example, 1)
+          }
         }
         return next
       }),
@@ -316,9 +440,9 @@ function HomePage() {
       const href = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = href
-      anchor.download = `${deckName.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') ||
-        'anki-deck'
-        }.apkg`
+      anchor.download = `${deckName
+        .replace(/[^a-z0-9]+/gi, '-')
+        .replace(/^-|-$/g, '') || 'anki-deck'}.apkg`
       document.body.appendChild(anchor)
       anchor.click()
       anchor.remove()
@@ -420,6 +544,8 @@ function HomePage() {
     )
   }
 
+  const selectedPresetBook = PRESET_BOOKS.find((b) => b.slug === selectedBook)
+
   return (
     <main className="mx-auto max-w-5xl px-4 py-8 pb-32 sm:px-6 sm:py-12">
       {/* Top Brand Header */}
@@ -435,7 +561,7 @@ function HomePage() {
               coss.com/ui
             </Badge>
             <span className="text-border">/</span>
-            <span>Anki .apkg Generator</span>
+            <span>Vocabulary & Notes Anki Builder</span>
           </div>
 
           {authRequired && (
@@ -456,7 +582,7 @@ function HomePage() {
           Tạo Anki Deck Thông Minh
         </h1>
         <p className="max-w-2xl text-base text-muted-foreground sm:text-lg">
-          Trích xuất từ vựng từ bài học trực tuyến hoặc danh sách tùy ý, tự động làm phong phú định nghĩa bằng AI, kèm hình ảnh minh họa Bing và phát âm chuẩn Youdao.
+          Trích xuất đầy đủ từ vựng (Vocabulary) và các ghi chú cách dùng quan trọng (Language Notes) từ toàn bộ bộ sách English Vocabulary in Use, làm giàu nội dung bằng TanStack AI và xuất file Anki (.apkg) có âm thanh offline.
         </p>
       </header>
 
@@ -467,37 +593,39 @@ function HomePage() {
           <button
             type="button"
             onClick={() => setStep(1)}
-            className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-medium transition-all ${step === 1
+            className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-medium transition-all ${
+              step === 1
                 ? 'bg-primary text-primary-foreground shadow-xs font-semibold'
                 : step > 1
                   ? 'bg-primary/10 text-primary hover:bg-primary/20'
                   : 'text-muted-foreground hover:text-foreground'
-              }`}
+            }`}
           >
             <span className="flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-bold border border-current">
               {step > 1 ? <CheckIcon className="size-3" aria-hidden="true" /> : '1'}
             </span>
-            <span className="hidden sm:inline">1. Nhập từ vựng</span>
-            <span className="sm:hidden">Nhập từ</span>
+            <span className="hidden sm:inline">1. Chọn bài học</span>
+            <span className="sm:hidden">Bài học</span>
           </button>
 
           {/* Step 2 Tab */}
           <button
             type="button"
-            onClick={() => allWords.length > 0 && setStep(2)}
-            disabled={allWords.length === 0}
-            className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${step === 2
+            onClick={() => (allWords.length > 0 || allNotes.length > 0) && setStep(2)}
+            disabled={allWords.length === 0 && allNotes.length === 0}
+            className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+              step === 2
                 ? 'bg-primary text-primary-foreground shadow-xs font-semibold'
                 : step > 2
                   ? 'bg-primary/10 text-primary hover:bg-primary/20'
                   : 'text-muted-foreground hover:text-foreground'
-              }`}
+            }`}
           >
             <span className="flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-bold border border-current">
               {step > 2 ? <CheckIcon className="size-3" aria-hidden="true" /> : '2'}
             </span>
-            <span className="hidden sm:inline">2. Chọn từ vựng</span>
-            <span className="sm:hidden">Chọn từ</span>
+            <span className="hidden sm:inline">2. Chọn nội dung</span>
+            <span className="sm:hidden">Nội dung</span>
           </button>
 
           {/* Step 3 Tab */}
@@ -505,10 +633,11 @@ function HomePage() {
             type="button"
             onClick={() => cards.length > 0 && setStep(3)}
             disabled={cards.length === 0}
-            className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${step === 3
+            className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+              step === 3
                 ? 'bg-primary text-primary-foreground shadow-xs font-semibold'
                 : 'text-muted-foreground hover:text-foreground'
-              }`}
+            }`}
           >
             <span className="flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-bold border border-current">
               3
@@ -523,10 +652,11 @@ function HomePage() {
       {(status || error) && (
         <div
           role="status"
-          className={`mb-6 flex items-start gap-3 rounded-xl border p-4 text-sm transition-all ${error
+          className={`mb-6 flex items-start gap-3 rounded-xl border p-4 text-sm transition-all ${
+            error
               ? 'border-destructive/40 bg-destructive/10 text-destructive'
               : 'border-primary/30 bg-primary/10 text-foreground'
-            }`}
+          }`}
         >
           {error ? (
             <AlertCircleIcon className="size-5 shrink-0 text-destructive mt-0.5" aria-hidden="true" />
@@ -556,9 +686,9 @@ function HomePage() {
                 <BookOpenIcon className="size-5" aria-hidden="true" />
               </div>
               <div>
-                <CardTitle>Bước 1: Nguồn dữ liệu từ vựng</CardTitle>
+                <CardTitle>Bước 1: Nguồn dữ liệu bài học</CardTitle>
                 <CardDescription>
-                  Chọn nhập bài học từ đường dẫn URL hoặc dán danh sách từ vựng tiếng Anh trực tiếp.
+                  Chọn bộ sách và số Unit có sẵn, hoặc dán URL bài học / link data.json tùy ý.
                 </CardDescription>
               </div>
             </div>
@@ -566,7 +696,16 @@ function HomePage() {
 
           <CardPanel className="flex flex-col gap-6">
             {/* Input Mode Selector */}
-            <div className="flex gap-2 border-b border-border/60 pb-4">
+            <div className="flex flex-wrap gap-2 border-b border-border/60 pb-4">
+              <Button
+                variant={inputMode === 'preset' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setInputMode('preset')}
+                className="gap-2"
+              >
+                <CompassIcon className="size-4" aria-hidden="true" />
+                Chọn sách & Unit có sẵn
+              </Button>
               <Button
                 variant={inputMode === 'url' ? 'default' : 'outline'}
                 size="sm"
@@ -574,7 +713,7 @@ function HomePage() {
                 className="gap-2"
               >
                 <LinkIcon className="size-4" aria-hidden="true" />
-                Trích xuất từ URL bài học
+                Nhập URL / link data.json
               </Button>
               <Button
                 variant={inputMode === 'text' ? 'default' : 'outline'}
@@ -587,12 +726,80 @@ function HomePage() {
               </Button>
             </div>
 
-            {/* Mode A: URL input */}
+            {/* Mode 1: Preset Book & Unit Selector */}
+            {inputMode === 'preset' && (
+              <div className="flex flex-col gap-5">
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_160px] gap-4">
+                  {/* Book Selector */}
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="book-select" className="text-sm font-semibold text-foreground">
+                      Bộ sách English Vocabulary in Use
+                    </label>
+                    <select
+                      id="book-select"
+                      value={selectedBook}
+                      onChange={(e) => {
+                        setSelectedBook(e.target.value)
+                        const book = PRESET_BOOKS.find((b) => b.slug === e.target.value)
+                        if (book && unitNumber > book.totalUnits) {
+                          setUnitNumber(1)
+                        }
+                      }}
+                      className="w-full rounded-lg border border-border/80 bg-background px-3 py-2 text-sm font-medium shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    >
+                      {PRESET_BOOKS.map((book) => (
+                        <option key={book.slug} value={book.slug}>
+                          {book.title} ({book.level} - {book.totalUnits} Units)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Unit Picker */}
+                  <div className="flex flex-col gap-1.5">
+                    <label htmlFor="unit-number" className="text-sm font-semibold text-foreground">
+                      Số Unit (1 - {selectedPresetBook?.totalUnits || 100})
+                    </label>
+                    <Input
+                      id="unit-number"
+                      type="number"
+                      min={1}
+                      max={selectedPresetBook?.totalUnits || 100}
+                      value={unitNumber}
+                      onChange={(e) => setUnitNumber(Math.max(1, Number(e.target.value)))}
+                      className="font-mono text-sm font-bold"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3.5 rounded-xl border border-primary/20 bg-primary/5 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <InfoIcon className="size-4 text-primary shrink-0" aria-hidden="true" />
+                    <span>
+                      Hệ thống sẽ tự động bóc tách từ vựng, hình ảnh, cụm từ chính và ghi chú của{' '}
+                      <strong className="text-foreground">
+                        {selectedPresetBook?.title} (Unit {unitNumber})
+                      </strong>.
+                    </span>
+                  </div>
+                  <Button
+                    onClick={onAnalyze}
+                    loading={isAnalyzing}
+                    className="shrink-0 gap-2 font-semibold w-full sm:w-auto"
+                  >
+                    <SparklesIcon className="size-4" aria-hidden="true" />
+                    Phân tích bài học
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Mode 2: Custom URL input */}
             {inputMode === 'url' && (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-2">
                   <label htmlFor="lesson-url" className="text-sm font-semibold text-foreground">
-                    URL bài học Essential English
+                    URL bài học hoặc link file data.json
                   </label>
                   <div className="flex flex-col sm:flex-row gap-2.5">
                     <Input
@@ -600,11 +807,21 @@ function HomePage() {
                       type="url"
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
-                      placeholder="https://www.essentialenglish.review/..."
+                      placeholder="https://www.essentialenglish.review/apps/... hoặc https://.../data.json"
                       className="flex-1"
                     />
+                    <Input
+                      type="number"
+                      min={1}
+                      max={150}
+                      value={urlUnitOverride}
+                      onChange={(e) => setUrlUnitOverride(e.target.value)}
+                      placeholder="Unit # (tùy chọn)"
+                      className="w-full sm:w-32 font-mono"
+                      title="Chỉ định số Unit nếu link data.json không có số unit"
+                    />
                     <Button
-                      onClick={onAnalyzeUrl}
+                      onClick={onAnalyze}
                       loading={isAnalyzing}
                       className="shrink-0 gap-2 font-semibold"
                     >
@@ -613,13 +830,13 @@ function HomePage() {
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Hỗ trợ các bài học tại Essential English Review (sách English Vocabulary in Use).
+                    Hỗ trợ link bài học trực tuyến (ví dụ: <code className="font-mono text-primary">/apps/english-vocabulary-in-use-upper-intermediate/unit-9-...</code>) hoặc link JSON trực tiếp (<code className="font-mono text-primary">.../data/data.json</code>).
                   </p>
                 </div>
               </div>
             )}
 
-            {/* Mode B: Text input */}
+            {/* Mode 3: Text input */}
             {inputMode === 'text' && (
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-2">
@@ -664,108 +881,229 @@ function HomePage() {
                 placeholder="English Vocabulary in Use::Unit 9"
               />
               <p className="text-xs text-muted-foreground">
-                Mẹo Anki: Dùng ký tự <code className="rounded bg-muted px-1.5 py-0.5 text-primary font-mono text-[0.8rem]">::</code> để tạo cấu trúc thư mục con (ví dụ: <code className="text-muted-foreground font-mono">Tiếng Anh::Giao tiếp::Bài 1</code>).
+                Mẹo Anki: Dùng ký tự <code className="rounded bg-muted px-1.5 py-0.5 text-primary font-mono text-[0.8rem]">::</code> để tạo cấu trúc cây thư mục (ví dụ: <code className="text-muted-foreground font-mono">English Vocabulary in Use::Unit 9: The body and movement</code>).
               </p>
             </div>
           </CardPanel>
         </Card>
       )}
 
-      {/* STEP 2: WORD SELECTION */}
+      {/* STEP 2: CONTENT SELECTION (VOCABULARY & NOTES) */}
       {step === 2 && (
-        <Card className="border-border/80 bg-card/80 backdrop-blur-md">
-          <CardHeader>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
-                  <CheckSquareIcon className="size-5" aria-hidden="true" />
+        <div className="flex flex-col gap-6">
+          {/* Header summary of extracted unit */}
+          <Card className="border-border/80 bg-card/80 backdrop-blur-md">
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
+                    <CheckSquareIcon className="size-5" aria-hidden="true" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-xl">Bước 2: Chọn nội dung bài học</CardTitle>
+                    <CardDescription className="text-sm">
+                      {lesson?.bookTitle ? `${lesson.bookTitle} — ` : ''}
+                      <span className="font-semibold text-foreground">
+                        {lesson?.unitTitle || 'Danh sách tùy chỉnh'}
+                      </span>
+                    </CardDescription>
+                  </div>
                 </div>
-                <div>
-                  <CardTitle>Bước 2: Chọn từ vựng cần tạo thẻ</CardTitle>
-                  <CardDescription>
-                    Đã chọn <span className="font-semibold text-foreground">{selectedWords.length}</span> / {allWords.length} từ vựng.
-                  </CardDescription>
+
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs font-mono">
+                    {selectedWords.length} / {allWords.length} từ vựng
+                  </Badge>
+                  {allNotes.length > 0 && (
+                    <Badge variant="secondary" className="text-xs font-mono">
+                      {selectedNotes.length} / {allNotes.length} ghi chú
+                    </Badge>
+                  )}
                 </div>
               </div>
+            </CardHeader>
+          </Card>
 
-              {/* Selection Controls */}
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setChecked(Object.fromEntries(allWords.map((w) => [w, true])))
-                  }
-                >
-                  Chọn tất cả ({allWords.length})
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    setChecked(Object.fromEntries(allWords.map((w) => [w, false])))
-                  }
-                >
-                  Bỏ chọn
-                </Button>
-              </div>
-            </div>
-          </CardHeader>
+          {/* Section 1: Vocabulary List */}
+          <Card className="border-border/80 bg-card/80 backdrop-blur-md">
+            <CardHeader className="pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <BookmarkIcon className="size-4 text-primary" aria-hidden="true" />
+                  <CardTitle className="text-base font-bold">
+                    1. Danh sách từ vựng (Vocabulary List)
+                  </CardTitle>
+                  <Badge variant="secondary" className="text-xs">
+                    {selectedWords.length} đã chọn
+                  </Badge>
+                </div>
 
-          <CardPanel className="flex flex-col gap-4">
-            {/* Search Filter */}
-            <div className="relative">
-              <Input
-                type="search"
-                value={wordFilter}
-                onChange={(e) => setWordFilter(e.target.value)}
-                placeholder="Tìm nhanh từ vựng trong danh sách..."
-                className="pl-9"
-              />
-              <SearchIcon
-                className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-            </div>
-
-            {/* Word Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[460px] overflow-y-auto p-1 pr-2 rounded-xl border border-border/40 bg-muted/20">
-              {filteredWords.map((word) => {
-                const isChecked = checked[word] !== false
-                return (
-                  <label
-                    key={word}
-                    className={`flex items-center gap-2.5 rounded-lg border p-2.5 text-sm font-medium cursor-pointer transition-all select-none ${isChecked
-                        ? 'border-primary/50 bg-primary/10 text-foreground shadow-xs'
-                        : 'border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:bg-card/70'
-                      }`}
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={() =>
+                      setCheckedWords(Object.fromEntries(allWords.map((w) => [w, true])))
+                    }
                   >
-                    <Checkbox
-                      checked={isChecked}
-                      onCheckedChange={(c) =>
-                        setChecked((old) => ({ ...old, [word]: Boolean(c) }))
-                      }
-                    />
-                    <span className="truncate flex-1 font-mono text-xs sm:text-sm">
-                      {word}
-                    </span>
-                  </label>
-                )
-              })}
-              {filteredWords.length === 0 && (
-                <div className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                  Không tìm thấy từ vựng nào khớp với &quot;{wordFilter}&quot;.
+                    Chọn tất cả ({allWords.length})
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() =>
+                      setCheckedWords(Object.fromEntries(allWords.map((w) => [w, false])))
+                    }
+                  >
+                    Bỏ chọn
+                  </Button>
                 </div>
-              )}
-            </div>
-          </CardPanel>
+              </div>
+            </CardHeader>
 
-          <CardFooter className="flex flex-col-reverse sm:flex-row justify-between gap-3 border-t border-border/60 pt-4">
-            <Button
-              variant="ghost"
-              onClick={() => setStep(1)}
-              className="gap-2"
-            >
+            <CardPanel className="flex flex-col gap-4">
+              {/* Search Filter */}
+              <div className="relative">
+                <Input
+                  type="search"
+                  value={wordFilter}
+                  onChange={(e) => setWordFilter(e.target.value)}
+                  placeholder="Tìm nhanh từ vựng trong bài..."
+                  className="pl-9 text-xs sm:text-sm"
+                />
+                <SearchIcon
+                  className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden="true"
+                />
+              </div>
+
+              {/* Word Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[380px] overflow-y-auto p-1 pr-2 rounded-xl border border-border/40 bg-muted/20">
+                {filteredWords.map((word) => {
+                  const isChecked = checkedWords[word] !== false
+                  return (
+                    <label
+                      key={word}
+                      className={`flex items-center gap-2.5 rounded-lg border p-2.5 text-sm font-medium cursor-pointer transition-all select-none ${
+                        isChecked
+                          ? 'border-primary/50 bg-primary/10 text-foreground shadow-xs'
+                          : 'border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:bg-card/70'
+                      }`}
+                    >
+                      <Checkbox
+                        checked={isChecked}
+                        onCheckedChange={(c) =>
+                          setCheckedWords((old) => ({ ...old, [word]: Boolean(c) }))
+                        }
+                      />
+                      <span className="truncate flex-1 font-mono text-xs sm:text-sm">
+                        {word}
+                      </span>
+                    </label>
+                  )
+                })}
+                {filteredWords.length === 0 && (
+                  <div className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                    Không tìm thấy từ vựng nào khớp với &quot;{wordFilter}&quot;.
+                  </div>
+                )}
+              </div>
+            </CardPanel>
+          </Card>
+
+          {/* Section 2: Language Notes / Important Phrases */}
+          {allNotes.length > 0 && (
+            <Card className="border-border/80 bg-card/80 backdrop-blur-md">
+              <CardHeader className="pb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <SparklesIcon className="size-4 text-amber-500" aria-hidden="true" />
+                    <CardTitle className="text-base font-bold">
+                      2. Ghi chú quan trọng & Cụm từ (Language Notes)
+                    </CardTitle>
+                    <Badge variant="outline" className="text-xs border-amber-500/30 text-amber-500">
+                      {selectedNotes.length} đã chọn
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() =>
+                        setCheckedNotes(Object.fromEntries(allNotes.map((n) => [n.id, true])))
+                      }
+                    >
+                      Chọn tất cả ({allNotes.length})
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        setCheckedNotes(Object.fromEntries(allNotes.map((n) => [n.id, false])))
+                      }
+                    >
+                      Bỏ chọn
+                    </Button>
+                  </div>
+                </div>
+                <CardDescription className="text-xs">
+                  Mỗi ghi chú sẽ được AI chuyển thành 1 Note Card trong Anki (tóm tắt cụm từ, giải thích tiếng Việt và câu ví dụ).
+                </CardDescription>
+              </CardHeader>
+
+              <CardPanel className="flex flex-col gap-3">
+                {allNotes.map((note) => {
+                  const isChecked = checkedNotes[note.id] !== false
+                  return (
+                    <div
+                      key={note.id}
+                      className={`flex flex-col gap-2 rounded-xl border p-3.5 transition-all ${
+                        isChecked
+                          ? 'border-amber-500/40 bg-amber-500/5'
+                          : 'border-border/40 bg-card/40 opacity-70'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                          <Checkbox
+                            checked={isChecked}
+                            onCheckedChange={(c) =>
+                              setCheckedNotes((old) => ({ ...old, [note.id]: Boolean(c) }))
+                            }
+                          />
+                          <span className="font-bold text-sm text-foreground">
+                            {note.title}
+                          </span>
+                        </label>
+                        {note.sectionLetter && (
+                          <Badge variant="secondary" className="font-mono text-xs font-bold">
+                            Mục {note.sectionLetter}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {/* Content phrases snippet */}
+                      <div className="pl-6 flex flex-wrap gap-1.5 pt-1">
+                        {note.content.map((phrase, pIdx) => (
+                          <span
+                            key={pIdx}
+                            className="inline-block rounded-md bg-muted/60 px-2 py-0.5 text-xs text-foreground/85 border border-border/40"
+                          >
+                            {phrase}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </CardPanel>
+            </Card>
+          )}
+
+          {/* Bottom Action Footer */}
+          <div className="flex flex-col-reverse sm:flex-row justify-between gap-3 pt-2">
+            <Button variant="ghost" onClick={() => setStep(1)} className="gap-2">
               <ArrowLeftIcon className="size-4" aria-hidden="true" />
               Quay lại Bước 1
             </Button>
@@ -773,15 +1111,16 @@ function HomePage() {
             <Button
               onClick={onGenerateCards}
               loading={isGenerating}
-              disabled={selectedWords.length === 0}
-              className="gap-2 font-semibold"
+              disabled={selectedWords.length === 0 && selectedNotes.length === 0}
+              className="gap-2 font-semibold shadow-md"
             >
               <SparklesIcon className="size-4" aria-hidden="true" />
-              Tạo Flashcard AI ({selectedWords.length} từ)
+              Tạo Anki Deck ({selectedWords.length} từ vựng
+              {selectedNotes.length > 0 ? `, ${selectedNotes.length} ghi chú` : ''})
               <ArrowRightIcon className="size-4" aria-hidden="true" />
             </Button>
-          </CardFooter>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* STEP 3: CARD REVIEW & EXPORT */}
@@ -796,9 +1135,10 @@ function HomePage() {
                     <LayersIcon className="size-5" aria-hidden="true" />
                   </div>
                   <div>
-                    <CardTitle>Bước 3: Xem & Tinh chỉnh thẻ Anki</CardTitle>
+                    <CardTitle className="text-xl">Bước 3: Xem & Tinh chỉnh thẻ Anki</CardTitle>
                     <CardDescription>
-                      Đã tạo <span className="font-semibold text-foreground">{cards.length}</span> thẻ flashcard. Bạn có thể chỉnh sửa nội dung hoặc query hình ảnh trước khi xuất file.
+                      Đã tạo <span className="font-semibold text-foreground">{cards.length}</span> thẻ
+                      flashcard ({vocabCardCount} từ vựng, {noteCardCount} ghi chú). Bạn có thể chỉnh sửa trước khi xuất file.
                     </CardDescription>
                   </div>
                 </div>
@@ -810,18 +1150,18 @@ function HomePage() {
                   className="gap-2 shrink-0 self-start sm:self-auto"
                 >
                   <ArrowLeftIcon className="size-3.5" aria-hidden="true" />
-                  Chọn lại từ vựng
+                  Chọn lại nội dung
                 </Button>
               </div>
             </CardHeader>
 
-            <CardPanel>
+            <CardPanel className="flex flex-col gap-3">
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 p-3 rounded-xl border border-border/60 bg-muted/20">
                 <label
                   htmlFor="review-deck-name"
                   className="text-xs font-bold uppercase tracking-wider text-muted-foreground whitespace-nowrap"
                 >
-                  Tên Deck:
+                  Tên Deck Anki:
                 </label>
                 <Input
                   id="review-deck-name"
@@ -831,195 +1171,345 @@ function HomePage() {
                   className="flex-1 font-medium text-sm"
                 />
               </div>
+
+              {/* Card Type Filter Buttons */}
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-xs font-semibold text-muted-foreground">Lọc hiển thị:</span>
+                <Button
+                  variant={cardFilterType === 'all' ? 'default' : 'outline'}
+                  size="xs"
+                  onClick={() => setCardFilterType('all')}
+                >
+                  Tất cả ({cards.length})
+                </Button>
+                <Button
+                  variant={cardFilterType === 'vocabulary' ? 'default' : 'outline'}
+                  size="xs"
+                  onClick={() => setCardFilterType('vocabulary')}
+                >
+                  Từ vựng ({vocabCardCount})
+                </Button>
+                {noteCardCount > 0 && (
+                  <Button
+                    variant={cardFilterType === 'note' ? 'default' : 'outline'}
+                    size="xs"
+                    onClick={() => setCardFilterType('note')}
+                  >
+                    Ghi chú ({noteCardCount})
+                  </Button>
+                )}
+              </div>
             </CardPanel>
           </Card>
 
-          {/* Card Frame List */}
+          {/* Cards List */}
           <div className="flex flex-col gap-5">
-            {cards.map((card, index) => (
-              <CardFrame
-                key={card.id}
-                className={`transition-all ${card.selected
-                    ? 'border-border/80 shadow-xs'
-                    : 'opacity-60 border-dashed border-border/40'
-                  }`}
-              >
-                {/* Header of each Card Frame */}
-                <CardFrameHeader>
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <span className="flex size-6 items-center justify-center rounded-md bg-muted text-xs font-mono font-bold text-muted-foreground">
-                      #{index + 1}
-                    </span>
-                    <CardFrameTitle className="text-base font-bold text-foreground">
-                      {card.word}
-                    </CardFrameTitle>
-                    {card.ipa && (
-                      <Badge variant="outline" className="font-mono text-xs">
-                        {card.ipa}
-                      </Badge>
-                    )}
-                    {card.vietnamese && (
-                      <Badge variant="secondary" className="text-xs font-medium">
-                        {card.vietnamese}
-                      </Badge>
-                    )}
-                  </div>
+            {displayedCards.map((card, index) => {
+              const realIndex = cards.findIndex((c) => c.id === card.id)
 
-                  <CardFrameAction>
-                    <label className="flex items-center gap-2 text-xs font-medium cursor-pointer select-none">
-                      <Checkbox
-                        checked={card.selected}
-                        onCheckedChange={(c) =>
-                          patchCard(index, { selected: Boolean(c) })
-                        }
-                      />
-                      <span>Bao gồm trong deck</span>
-                    </label>
-                  </CardFrameAction>
-                </CardFrameHeader>
+              if (card.type === 'note') {
+                return (
+                  <CardFrame
+                    key={card.id}
+                    className={`transition-all ${
+                      card.selected
+                        ? 'border-amber-500/40 bg-card/80 shadow-xs'
+                        : 'opacity-60 border-dashed border-border/40'
+                    }`}
+                  >
+                    <CardFrameHeader className="border-b border-border/40 pb-3">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="flex size-6 items-center justify-center rounded-md bg-amber-500/10 text-xs font-mono font-bold text-amber-500">
+                          #{realIndex + 1}
+                        </span>
+                        <Badge variant="outline" className="border-amber-500/30 text-amber-500 font-bold text-xs">
+                          LANGUAGE NOTE
+                        </Badge>
+                        <CardFrameTitle className="text-base font-bold text-foreground">
+                          {card.title}
+                        </CardFrameTitle>
+                      </div>
 
-                {/* Body: Two columns layout */}
-                <div className="p-5 grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6">
-                  {/* Left Column: Image & Image Query */}
-                  <div className="flex flex-col gap-3">
-                    <div className="relative aspect-square w-full overflow-hidden rounded-xl border border-border/60 bg-muted/40 shadow-xs group">
-                      <img
-                        src={card.imageUrl}
-                        alt={card.word}
-                        className="size-full object-cover transition-transform group-hover:scale-105"
-                        loading="lazy"
-                      />
-                    </div>
+                      <CardFrameAction>
+                        <label className="flex items-center gap-2 text-xs font-medium cursor-pointer select-none">
+                          <Checkbox
+                            checked={card.selected}
+                            onCheckedChange={(c) =>
+                              patchCard(realIndex, { selected: Boolean(c) })
+                            }
+                          />
+                          <span>Bao gồm trong deck</span>
+                        </label>
+                      </CardFrameAction>
+                    </CardFrameHeader>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                        Bing Image Query
-                      </label>
-                      <div className="flex gap-1.5">
+                    <div className="p-5 flex flex-col gap-4">
+                      {/* Audio Button */}
+                      {card.example && (
+                        <div className="flex items-center gap-2 pb-1">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => playAudio(card.exampleAudioUrl)}
+                            className="gap-1.5 text-xs"
+                          >
+                            <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
+                            Nghe câu ví dụ ghi chú
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Title input */}
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                          Tiêu đề ghi chú (Topic Title)
+                        </label>
                         <Input
                           size="sm"
-                          value={card.imageQuery}
+                          value={card.title}
+                          onChange={(e) => patchCard(realIndex, { title: e.target.value })}
+                          className="font-semibold text-sm"
+                        />
+                      </div>
+
+                      {/* Content Bullet Items */}
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                          Các cụm từ / Quy tắc trọng tâm (mỗi dòng 1 ý)
+                        </label>
+                        <Textarea
+                          size="sm"
+                          rows={3}
+                          value={card.content.join('\n')}
                           onChange={(e) =>
-                            patchCard(index, { imageQuery: e.target.value })
+                            patchCard(realIndex, {
+                              content: e.target.value
+                                .split('\n')
+                                .map((l) => l.trim())
+                                .filter(Boolean),
+                            })
                           }
-                          aria-label="Từ khóa tìm ảnh Bing"
                           className="font-mono text-xs"
                         />
-                        <Button
-                          size="icon-sm"
-                          variant="outline"
-                          title="Tải lại hình ảnh theo query mới"
-                          onClick={() =>
-                            patchCard(index, { imageQuery: card.imageQuery.trim() })
+                      </div>
+
+                      {/* Vietnamese Explanation */}
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                          Giải thích tiếng Việt (Vietnamese Explanation)
+                        </label>
+                        <Input
+                          size="sm"
+                          value={card.vietnameseExplanation}
+                          onChange={(e) =>
+                            patchCard(realIndex, { vietnameseExplanation: e.target.value })
                           }
+                          className="text-sm"
+                        />
+                      </div>
+
+                      {/* Example Sentence */}
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                          Câu ví dụ ngữ cảnh (Example Sentence)
+                        </label>
+                        <Textarea
+                          size="sm"
+                          value={card.example}
+                          onChange={(e) => patchCard(realIndex, { example: e.target.value })}
+                          className="text-sm italic"
+                        />
+                      </div>
+                    </div>
+                  </CardFrame>
+                )
+              }
+
+              // Vocabulary Card Render
+              return (
+                <CardFrame
+                  key={card.id}
+                  className={`transition-all ${
+                    card.selected
+                      ? 'border-border/80 shadow-xs'
+                      : 'opacity-60 border-dashed border-border/40'
+                  }`}
+                >
+                  <CardFrameHeader>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="flex size-6 items-center justify-center rounded-md bg-muted text-xs font-mono font-bold text-muted-foreground">
+                        #{realIndex + 1}
+                      </span>
+                      <Badge variant="outline" className="text-primary font-bold text-xs">
+                        VOCABULARY
+                      </Badge>
+                      <CardFrameTitle className="text-base font-bold text-foreground">
+                        {card.word}
+                      </CardFrameTitle>
+                      {card.ipa && (
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {card.ipa}
+                        </Badge>
+                      )}
+                      {card.vietnamese && (
+                        <Badge variant="secondary" className="text-xs font-medium">
+                          {card.vietnamese}
+                        </Badge>
+                      )}
+                    </div>
+
+                    <CardFrameAction>
+                      <label className="flex items-center gap-2 text-xs font-medium cursor-pointer select-none">
+                        <Checkbox
+                          checked={card.selected}
+                          onCheckedChange={(c) =>
+                            patchCard(realIndex, { selected: Boolean(c) })
+                          }
+                        />
+                        <span>Bao gồm trong deck</span>
+                      </label>
+                    </CardFrameAction>
+                  </CardFrameHeader>
+
+                  {/* Body: Two columns layout */}
+                  <div className="p-5 grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6">
+                    {/* Left Column: Image & Image Query */}
+                    <div className="flex flex-col gap-3">
+                      <div className="relative aspect-square w-full overflow-hidden rounded-xl border border-border/60 bg-muted/40 shadow-xs group">
+                        <img
+                          src={card.imageUrl}
+                          alt={card.word}
+                          className="size-full object-cover transition-transform group-hover:scale-105"
+                          loading="lazy"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                          Bing Image Query
+                        </label>
+                        <div className="flex gap-1.5">
+                          <Input
+                            size="sm"
+                            value={card.imageQuery}
+                            onChange={(e) =>
+                              patchCard(realIndex, { imageQuery: e.target.value })
+                            }
+                            aria-label="Từ khóa tìm ảnh Bing"
+                            className="font-mono text-xs"
+                          />
+                          <Button
+                            size="icon-sm"
+                            variant="outline"
+                            title="Tải lại hình ảnh theo query mới"
+                            onClick={() =>
+                              patchCard(realIndex, { imageQuery: card.imageQuery.trim() })
+                            }
+                          >
+                            <RefreshCwIcon className="size-3.5" aria-hidden="true" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Column: Editable fields & Audio buttons */}
+                    <div className="flex flex-col gap-4">
+                      {/* Audio Preview Buttons */}
+                      <div className="flex flex-wrap items-center gap-2 pb-1">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => playAudio(card.wordAudioUrl)}
+                          className="gap-1.5 text-xs"
                         >
-                          <RefreshCwIcon className="size-3.5" aria-hidden="true" />
+                          <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
+                          Nghe phát âm từ
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => playAudio(card.exampleAudioUrl)}
+                          className="gap-1.5 text-xs"
+                        >
+                          <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
+                          Nghe câu ví dụ
                         </Button>
                       </div>
-                    </div>
-                  </div>
 
-                  {/* Right Column: Editable fields & Audio buttons */}
-                  <div className="flex flex-col gap-4">
-                    {/* Audio Preview Buttons */}
-                    <div className="flex flex-wrap items-center gap-2 pb-1">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => playAudio(card.wordAudioUrl)}
-                        className="gap-1.5 text-xs"
-                      >
-                        <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
-                        Nghe phát âm từ
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => playAudio(card.exampleAudioUrl)}
-                        className="gap-1.5 text-xs"
-                      >
-                        <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
-                        Nghe câu ví dụ
-                      </Button>
-                    </div>
+                      {/* Word & IPA row */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                            Từ vựng (Word)
+                          </label>
+                          <Input
+                            size="sm"
+                            value={card.word}
+                            onChange={(e) => patchCard(realIndex, { word: e.target.value })}
+                            className="font-medium"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                            Phiên âm (IPA)
+                          </label>
+                          <Input
+                            size="sm"
+                            value={card.ipa}
+                            onChange={(e) => patchCard(realIndex, { ipa: e.target.value })}
+                            className="font-mono"
+                          />
+                        </div>
+                      </div>
 
-                    {/* Word & IPA row */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Vietnamese Translation */}
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                          Từ vựng (Word)
+                          Nghĩa tiếng Việt
                         </label>
                         <Input
                           size="sm"
-                          value={card.word}
+                          value={card.vietnamese}
                           onChange={(e) =>
-                            patchCard(index, { word: e.target.value })
+                            patchCard(realIndex, { vietnamese: e.target.value })
                           }
-                          className="font-medium"
                         />
                       </div>
+
+                      {/* English Definition */}
                       <div className="flex flex-col gap-1.5">
                         <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                          Phiên âm (IPA)
+                          Định nghĩa tiếng Anh (English Definition)
                         </label>
-                        <Input
+                        <Textarea
                           size="sm"
-                          value={card.ipa}
+                          value={card.englishDefinition}
                           onChange={(e) =>
-                            patchCard(index, { ipa: e.target.value })
+                            patchCard(realIndex, {
+                              englishDefinition: e.target.value,
+                            })
                           }
-                          className="font-mono"
+                        />
+                      </div>
+
+                      {/* Example Sentence */}
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                          Câu ví dụ (Example Sentence)
+                        </label>
+                        <Textarea
+                          size="sm"
+                          value={card.example}
+                          onChange={(e) =>
+                            patchCard(realIndex, { example: e.target.value })
+                          }
                         />
                       </div>
                     </div>
-
-                    {/* Vietnamese Translation */}
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                        Nghĩa tiếng Việt
-                      </label>
-                      <Input
-                        size="sm"
-                        value={card.vietnamese}
-                        onChange={(e) =>
-                          patchCard(index, { vietnamese: e.target.value })
-                        }
-                      />
-                    </div>
-
-                    {/* English Definition */}
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                        Định nghĩa tiếng Anh (English Definition)
-                      </label>
-                      <Textarea
-                        size="sm"
-                        value={card.englishDefinition}
-                        onChange={(e) =>
-                          patchCard(index, {
-                            englishDefinition: e.target.value,
-                          })
-                        }
-                      />
-                    </div>
-
-                    {/* Example Sentence */}
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                        Câu ví dụ (Example Sentence)
-                      </label>
-                      <Textarea
-                        size="sm"
-                        value={card.example}
-                        onChange={(e) =>
-                          patchCard(index, { example: e.target.value })
-                        }
-                      />
-                    </div>
                   </div>
-                </div>
-              </CardFrame>
-            ))}
+                </CardFrame>
+              )
+            })}
           </div>
 
           {/* Sticky Bottom Export Action Bar */}
@@ -1033,7 +1523,8 @@ function HomePage() {
                   {selectedCards.length} thẻ flashcard sẵn sàng xuất
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  Tự động tải media hình ảnh Bing và 2 file phát âm Youdao vào file .apkg offline.
+                  Bao gồm {selectedCards.filter((c) => c.type === 'vocabulary').length} thẻ từ vựng và{' '}
+                  {selectedCards.filter((c) => c.type === 'note').length} thẻ ghi chú kèm âm thanh offline.
                 </span>
               </div>
             </div>
@@ -1044,7 +1535,7 @@ function HomePage() {
                 onClick={() => setStep(2)}
                 className="flex-1 sm:flex-none"
               >
-                Chọn lại từ
+                Chọn lại nội dung
               </Button>
               <Button
                 onClick={onExport}

@@ -12,25 +12,32 @@
 
 ## 🌟 Tính năng nổi bật
 
+- **Hỗ trợ đa bộ sách & Tùy biến nguồn dữ liệu không hardcode**:
+  - Hỗ trợ toàn bộ các bộ sách *English Vocabulary in Use*: **Elementary** (60 units), **Pre-intermediate & Intermediate** (100 units), **Upper-intermediate** (100 units), **Advanced** (100 units).
+  - Chọn nhanh bộ sách và số Unit (1 - 100) qua menu trực quan, hoặc dán bất kỳ URL bài học (`/apps/...`) / link file `data.json` tùy ý.
+- **Mô hình thẻ Anki kép (Dual Card Models)**:
+  - **Vocabulary Card**: Từ vựng, phiên âm IPA, hình ảnh Bing, định nghĩa tiếng Anh, nghĩa tiếng Việt, câu ví dụ và 2 file phát âm offline.
+  - **Language Note Card**: Bóc tách các cụm từ cố định (common expressions), quy tắc ngữ pháp, ghi chú chú ý (important phrases/collocations) từ bài học, được AI dịch giải thích sang tiếng Việt và tạo câu ví dụ thực hành.
 - **Quy trình Wizard 3 bước tinh gọn**:
-  1. **Nhập từ vựng**: Hỗ trợ phân tích tự động từ đường dẫn bài học Essential English hoặc dán danh sách từ tiếng Anh tùy ý.
-  2. **Chọn & Lọc từ vựng**: Lưới từ vựng tương tác với checkbox, tìm kiếm nhanh theo từ khóa, chọn/bỏ chọn tất cả.
-  3. **Xem trước & Xuất thẻ**: Xem và chỉnh sửa trực tiếp từng thẻ flashcard (`CardFrame`), nghe thử phát âm, đổi từ khóa tìm ảnh Bing, và đóng gói xuất file `.apkg` Anki offline.
+  1. **Nguồn dữ liệu**: Chọn bộ sách + Unit hoặc dán link `data.json` / dán từ tự do.
+  2. **Chọn nội dung**: Phân tách riêng biệt giữa **Từ vựng** và **Ghi chú quan trọng (Language Notes)** với checkbox, lọc tìm kiếm, chọn/bỏ chọn tất cả.
+  3. **Xem trước & Xuất thẻ**: Lọc xem theo loại thẻ (Tất cả / Từ vựng / Ghi chú), chỉnh sửa nội dung, nghe thử phát âm Youdao, và tải file `.apkg` hoàn chỉnh.
 - **TanStack AI Structured Output**:
   - Tích hợp `@tanstack/ai` và `@tanstack/ai-openai` với Zod schema (`outputSchema`).
-  - Tự động tạo: Phiên âm IPA chuẩn, nghĩa tiếng Việt cho người học, định nghĩa tiếng Anh súc tích, câu ví dụ thực tế và từ khóa tìm kiếm ảnh minh họa.
-  - Tương thích với cả OpenAI trực tiếp lẫn các reverse proxy tương thích OpenAI.
+  - Sinh thẻ từ vựng và thẻ ghi chú song song, đảm bảo đầu ra luôn chuẩn xác.
 - **Làm giàu Media tự động**:
   - **Hình ảnh**: Tự động lấy thumbnail hình ảnh chất lượng cao từ Bing Images theo ngữ cảnh từ.
-  - **Âm thanh**: Tự động tải 2 file phát âm chuẩn Youdao (UK) cho cả từ vựng và câu ví dụ, nhúng trực tiếp vào gói `.apkg` để học offline.
+  - **Âm thanh**: Tự động tải file phát âm chuẩn Youdao (UK) cho cả từ vựng, câu ví dụ và thẻ ghi chú, nhúng trực tiếp vào gói `.apkg` để học offline.
 - **Giao diện hiện đại (coss.com/ui + Tailwind CSS v4)**:
   - Xây dựng trên các primitive `@base-ui/react` (Base UI / React 19).
   - Chủ đề **Dark Mode** mặc định sắc nét, phong cách công cụ AI hiện đại.
   - Bộ components tùy biến: `Button`, `Badge`, `Card`, `CardFrame`, `Input`, `Textarea`, `Checkbox`, `Spinner`.
+- **Runtime Nitro Production**:
+  - Tích hợp `nitro/vite` tạo server production tự động với SSR, phục vụ assets tối ưu và hỗ trợ triển khai mượt mà trên Coolify, Docker, Railpack.
 - **Bảo mật toàn diện (Access Gate)**:
   - Khóa truy cập bằng biến môi trường `APP_PASSWORD`.
   - Kiểm tra mật khẩu an toàn phía server bằng `crypto.timingSafeEqual` (chống timing attack).
-  - **Bảo vệ toàn diện cả ở tầng API**: Mọi API và server function (`analyzeLesson`, `generateVocabulary`, `/api/export`) đều bắt buộc token hoặc mật khẩu hợp lệ mới được thực thi.
+  - **Bảo vệ toàn diện cả ở tầng API**: Mọi API và server function (`analyzeLesson`, `generateVocabulary`, `generateNotes`, `/api/export`) đều bắt buộc token hoặc mật khẩu hợp lệ mới được thực thi.
 
 ---
 

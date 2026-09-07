@@ -3,24 +3,41 @@ import { z } from 'zod'
 import { buildApkg } from '@/server/anki'
 import { assertAuthorized } from '@/server/auth'
 
-const cardSchema = z.object({
+const vocabCardSchema = z.object({
+  type: z.literal('vocabulary').optional().default('vocabulary'),
   id: z.string(),
   selected: z.boolean(),
+  unitNumber: z.number().optional(),
   word: z.string(),
-  ipa: z.string(),
+  ipa: z.string().optional().default(''),
   vietnamese: z.string(),
-  englishDefinition: z.string(),
-  example: z.string(),
-  imageQuery: z.string(),
-  imageUrl: z.string().url(),
-  wordAudioUrl: z.string().url(),
-  exampleAudioUrl: z.string().url(),
-  sourceUrl: z.string().url(),
+  englishDefinition: z.string().optional().default(''),
+  example: z.string().optional().default(''),
+  imageQuery: z.string().optional().default(''),
+  imageUrl: z.string().optional().default(''),
+  wordAudioUrl: z.string().optional().default(''),
+  exampleAudioUrl: z.string().optional().default(''),
+  sourceUrl: z.string().optional().default(''),
 })
+
+const noteCardSchema = z.object({
+  type: z.literal('note'),
+  id: z.string(),
+  selected: z.boolean(),
+  unitNumber: z.number().optional(),
+  title: z.string(),
+  content: z.array(z.string()),
+  vietnameseExplanation: z.string().optional().default(''),
+  example: z.string().optional().default(''),
+  exampleAudioUrl: z.string().optional().default(''),
+  sourceUrl: z.string().optional().default(''),
+})
+
+const cardSchema = z.union([noteCardSchema, vocabCardSchema])
 
 const payloadSchema = z.object({
   deckName: z.string().min(1).max(120),
-  cards: z.array(cardSchema).min(1).max(100),
+  cards: z.array(cardSchema).min(1).max(200),
   token: z.string().optional(),
 })
 
