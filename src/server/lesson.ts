@@ -38,12 +38,11 @@ export function cleanHtmlText(html: string): string {
   return html
     .replace(/<br\s*\/?>/gi, ' ')
     .replace(/<[^>]+>/g, '')
-    .replace(/&rsquo;/g, "'")
-    .replace(/&lsquo;/g, "'")
-    .replace(/&rdquo;/g, '"')
-    .replace(/&ldquo;/g, '"')
-    .replace(/&ndash;/g, '-')
-    .replace(/&mdash;/g, '-')
+    .replace(/[’‘`]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/&rsquo;|&lsquo;|&#39;/g, "'")
+    .replace(/&rdquo;|&ldquo;/g, '"')
+    .replace(/&ndash;|&mdash;/g, '-')
     .replace(/&amp;/g, '&')
     .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
@@ -222,12 +221,194 @@ function findUnit(dataset: EssentialEnglishDataset, unitNumber: number) {
   return undefined
 }
 
-export function extractNotes(unit: EssentialEnglishUnit): ExtractedNote[] {
+function resolveImageUrl(
+  img: string | undefined,
+  datasetUrl: string,
+): string | undefined {
+  if (!img) return undefined
+  if (/^https?:\/\//i.test(img)) return img
+  try {
+    const parsed = new URL(datasetUrl)
+    const basePath = parsed.pathname.replace(/\/data\/data\.json$/i, '')
+    return `${parsed.origin}${basePath}/${img.replace(/^\//, '')}`
+  } catch {
+    return img
+  }
+}
+
+export function extractPhrasesAndWords(
+  unit: EssentialEnglishUnit,
+  datasetUrl: string,
+): {
+  words: string[]
+  phrases: string[]
+  vocabularyList: ExtractedVocabulary[]
+} {
+  const wordsList: ExtractedVocabulary[] = []
+  const phrasesList: ExtractedVocabulary[] = []
+  const seen = new Set<string>()
+
+  // 1. Process unit.wordlist
+  for (const item of unit.wordlist ?? []) {
+    const rawWord = cleanVocabularyItem(cleanHtmlText(item.en ?? ''))
+    if (!rawWord || rawWord.length < 2) continue
+    const lower = rawWord.toLowerCase()
+    if (seen.has(lower)) continue
+    seen.add(lower)
+
+    const fullImageUrl = resolveImageUrl(item.image, datasetUrl)
+    const isPhrase =
+      rawWord.includes(' ') || rawWord.includes('-') || rawWord.startsWith('to ')
+
+    const vocabItem: ExtractedVocabulary = {
+      word: rawWord,
+      hint: item.desc ? cleanHtmlText(item.desc) : undefined,
+      pron: item.pron,
+      desc: item.desc,
+      exam: item.exam,
+      image: fullImageUrl,
+      kind: isPhrase ? 'phrase' : 'word',
+    }
+
+    if (isPhrase) {
+      phrasesList.push(vocabItem)
+    } else {
+      wordsList.push(vocabItem)
+    }
+  }
+
+  // 2. Process unit.reading[0].story
+  const story = unit.reading?.[0]?.story ?? ''
+  if (story) {
+    // A. Match list items with images and phrases, e.g. <li><img src="..."><br /><strong>shake hands with someone</strong></li>
+    const liRegex =
+      /<li>(?:\s*<img[^>]*src=["']([^"']+)["'][^>]*>)?(?:\s*<br\s*\/?>)?\s*(?:<strong>)?([^<]+)(?:<\/strong>)?(?:\s*\[([^\]]+)\])?\s*<\/li>/gi
+    let liMatch: RegExpExecArray | null
+    while ((liMatch = liRegex.exec(story)) !== null) {
+      const imgSrc = liMatch[1]
+      const text = cleanHtmlText(liMatch[2])
+        .replace(/^[.,;:—–-]+\s*|\s*[.,;:—–-]+$/g, '')
+        .trim()
+      const hint = liMatch[3] ? cleanHtmlText(liMatch[3]) : undefined
+      if (text && text.length > 2 && !/^(?:a|an|the)$/i.test(text)) {
+        const fullImg = resolveImageUrl(imgSrc, datasetUrl)
+        const lower = text.toLowerCase()
+        const existing = phrasesList.find((p) => p.word.toLowerCase() === lower)
+        if (existing) {
+          if (!existing.image && fullImg) existing.image = fullImg
+          if (!existing.hint && hint) existing.hint = hint
+        } else {
+          phrasesList.push({
+            word: text,
+            hint,
+            image: fullImg,
+            kind: text.includes(' ') ? 'phrase' : 'word',
+          })
+          seen.add(lower)
+        }
+      }
+    }
+
+    // B. Match <strong> tags followed by optional [hint] or (hint)
+    const strongRegex =
+      /<strong>([^<]+)<\/strong>(?:[\s.,;:—–-]*[\[\(]([^\]\)<]+)[\]\)])?/gi
+    let sMatch: RegExpExecArray | null
+    while ((sMatch = strongRegex.exec(story)) !== null) {
+      const text = cleanHtmlText(sMatch[1])
+        .replace(/^[.,;:—–-]+\s*|\s*[.,;:—–-]+$/g, '')
+        .trim()
+      const hint = sMatch[2] ? cleanHtmlText(sMatch[2]) : undefined
+      if (
+        !text ||
+        text.length < 2 ||
+        /^(?:a|an|the|in|out|on|at|to|of|for|and|or|not|n|v|adj|adv|noun|verb|adjective|adverb)$/i.test(
+          text,
+        ) ||
+        text.includes('.jpg') ||
+        text.includes('.png')
+      ) {
+        continue
+      }
+
+      const lower = text.toLowerCase()
+      const existingPhrase = phrasesList.find(
+        (p) => p.word.toLowerCase() === lower,
+      )
+      if (existingPhrase) {
+        if (!existingPhrase.hint && hint) existingPhrase.hint = hint
+        continue
+      }
+
+      const existingWord = wordsList.find((w) => w.word.toLowerCase() === lower)
+      if (existingWord) {
+        if (!existingWord.hint && hint) existingWord.hint = hint
+        continue
+      }
+
+      seen.add(lower)
+      if (text.includes(' ') || text.includes('-') || text.startsWith('to ')) {
+        phrasesList.push({
+          word: text,
+          hint,
+          kind: 'phrase',
+        })
+      } else {
+        wordsList.push({
+          word: text,
+          hint,
+          kind: 'word',
+        })
+      }
+    }
+  }
+
+  // Deduplicate and promote more complete phrases (e.g. "a heart of gold" over "heart of gold")
+  const dedupedPhrases: ExtractedVocabulary[] = []
+  const sortedPhrases = [...phrasesList].sort(
+    (a, b) => b.word.length - a.word.length,
+  )
+
+  for (const item of sortedPhrases) {
+    const textCore = item.word
+      .toLowerCase()
+      .replace(/^(?:to\s+(?:be\s+)?|a\s+|an\s+|the\s+|as\s+)/, '')
+      .trim()
+    const existing = dedupedPhrases.find((r) => {
+      const rCore = r.word
+        .toLowerCase()
+        .replace(/^(?:to\s+(?:be\s+)?|a\s+|an\s+|the\s+|as\s+)/, '')
+        .trim()
+      return rCore === textCore || rCore.includes(textCore)
+    })
+
+    if (existing) {
+      if (!existing.hint && item.hint) existing.hint = item.hint
+      if (!existing.image && item.image) existing.image = item.image
+      if (!existing.pron && item.pron) existing.pron = item.pron
+    } else {
+      dedupedPhrases.push(item)
+    }
+  }
+
+  dedupedPhrases.sort((a, b) => a.word.localeCompare(b.word))
+  wordsList.sort((a, b) => a.word.localeCompare(b.word))
+
+  return {
+    words: wordsList.map((w) => w.word),
+    phrases: dedupedPhrases.map((p) => p.word),
+    vocabularyList: [...wordsList, ...dedupedPhrases],
+  }
+}
+
+export function extractNotes(
+  unit: EssentialEnglishUnit,
+  extractedPhrases: string[] = [],
+): ExtractedNote[] {
   const notes: ExtractedNote[] = []
   const story = unit.reading?.[0]?.story
   if (!story) return notes
 
-  // Split by <div class="section-rotate"> which separates sections (A ‣ ..., B ‣ ...)
+  const phraseSet = new Set(extractedPhrases.map((p) => p.toLowerCase()))
   const sectionParts = story.split(/<div class="section-rotate">/i)
 
   if (sectionParts.length > 1) {
@@ -236,53 +417,34 @@ export function extractNotes(unit: EssentialEnglishUnit): ExtractedNote[] {
       const headerMatch = part.match(/<span>([^<]+)<\/span>/i)
       const rawTitle = headerMatch ? cleanHtmlText(headerMatch[1]) : `Section ${i}`
 
-      // Extract section letter if available (e.g. "A" from "A ‣ Parts of the body")
       const letterMatch = rawTitle.match(/^([A-Z])\s*‣/i)
       const sectionLetter = letterMatch ? letterMatch[1].toUpperCase() : undefined
 
-      // Split paragraphs, list items, and line breaks into atomic phrase entries
       const rawLines = part
         .split(/<\/(?:p|li|div|h[1-6])>|<br\s*\/?>/i)
         .map((l) => cleanHtmlText(l))
         .filter(
           (l) =>
-            l.length > 3 &&
+            l.length > 15 &&
             !l.includes('.jpg') &&
             !l.includes('.png') &&
             !l.includes('speaker_louder') &&
-            !/^(?:positive|negative|noun|verb|adjective|adverb|examples?)$/i.test(l),
+            !/^(?:positive|negative|noun|verb|adjective|adverb|examples?)$/i.test(l) &&
+            !phraseSet.has(l.toLowerCase()),
         )
 
-      const items: string[] = []
-      for (const line of rawLines) {
-        if (!items.includes(line)) {
-          items.push(line)
-        }
-      }
+      // Only keep lines that are substantive (rules, tips, or full sentence explanations)
+      const substantive = rawLines.filter((l) => l.split(/\s+/).length >= 5)
 
-      if (items.length > 0) {
+      if (substantive.length > 0) {
         notes.push({
           id: `note-sec-${i}`,
           title: rawTitle,
           sectionLetter,
-          content: items.slice(0, 15),
+          content: substantive.slice(0, 10),
           rawHtml: part,
         })
       }
-    }
-  } else {
-    // If no section-rotate, check for paragraphs and strong blocks
-    const rawLines = story
-      .split(/<\/(?:p|li|div)>|<br\s*\/?>/i)
-      .map((l) => cleanHtmlText(l))
-      .filter((l) => l.length > 3 && !l.includes('.jpg') && !l.includes('.png'))
-
-    if (rawLines.length > 0) {
-      notes.push({
-        id: 'note-main',
-        title: 'Key phrases & expressions',
-        content: rawLines.slice(0, 15),
-      })
     }
   }
 
@@ -303,7 +465,9 @@ export async function analyzeLessonUrl(
   })
 
   if (!response.ok) {
-    throw new Error(`Could not load vocabulary dataset from ${datasetUrl} (HTTP ${response.status})`)
+    throw new Error(
+      `Could not load vocabulary dataset from ${datasetUrl} (HTTP ${response.status})`,
+    )
   }
 
   const dataset = (await response.json()) as EssentialEnglishDataset
@@ -313,19 +477,8 @@ export async function analyzeLessonUrl(
     throw new Error(`Unit ${unitNumber} was not found in the vocabulary dataset`)
   }
 
-  const vocabularyList: ExtractedVocabulary[] = (unit.wordlist ?? [])
-    .map((item) => ({
-      word: cleanVocabularyItem(item.en ?? ''),
-      image: item.image,
-      pron: item.pron,
-      desc: item.desc,
-      exam: item.exam,
-    }))
-    .filter((v) => Boolean(v.word))
-
-  const words = [...new Set(vocabularyList.map((v) => v.word))]
-
-  const notes = extractNotes(unit)
+  const { words, phrases, vocabularyList } = extractPhrasesAndWords(unit, datasetUrl)
+  const notes = extractNotes(unit, phrases)
 
   const rawUnitTitle = normalizeText(unit.en ?? `Unit ${unitNumber}`)
   const matchedBook = PRESET_BOOKS.find((b) => b.slug === bookSlug)
@@ -340,6 +493,7 @@ export async function analyzeLessonUrl(
     unitTitle: rawUnitTitle,
     title: rawUnitTitle,
     words,
+    phrases,
     vocabularyList,
     notes,
   }

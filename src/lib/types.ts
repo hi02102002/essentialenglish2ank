@@ -11,6 +11,8 @@ export type ExtractedVocabulary = {
   pron?: string
   desc?: string
   exam?: string
+  kind?: 'word' | 'phrase'
+  hint?: string
 }
 
 export type ExtractedNote = {
@@ -30,6 +32,7 @@ export type LessonAnalysis = {
   unitTitle: string
   title: string
   words: string[]
+  phrases: string[]
   vocabularyList: ExtractedVocabulary[]
   notes: ExtractedNote[]
 }
@@ -39,6 +42,8 @@ export type VocabularyCard = {
   id: string
   selected: boolean
   unitNumber?: number
+  kind?: 'word' | 'phrase'
+  hint?: string
   word: string
   ipa: string
   vietnamese: string

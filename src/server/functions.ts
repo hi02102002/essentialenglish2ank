@@ -64,7 +64,7 @@ export const analyzeLesson = createServerFn({ method: 'POST' })
 export const generateVocabulary = createServerFn({ method: 'POST' })
   .validator(
     z.object({
-      words: z.array(z.string().min(1).max(100)).min(1).max(60),
+      words: z.array(z.string().min(1).max(120)).min(1).max(150),
       token: z.string().optional(),
     }),
   )

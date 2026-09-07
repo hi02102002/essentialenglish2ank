@@ -76,9 +76,14 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
     exampleAudioTag = ''
   }
 
+  const isPhrase = card.kind === 'phrase' || card.word.includes(' ')
+  const badgeText = isPhrase ? 'PHRASE &amp; EXPRESSION' : 'VOCABULARY'
+  const badgeBg = isPhrase ? '#f3e8ff' : '#e0f2fe'
+  const badgeColor = isPhrase ? '#7e22ce' : '#0369a1'
+
   const front = `
     <div style="text-align:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:12px">
-      <div style="display:inline-block;padding:3px 8px;background:#e0f2fe;color:#0369a1;border-radius:6px;font-size:12px;font-weight:600;margin-bottom:12px">VOCABULARY</div>
+      <div style="display:inline-block;padding:3px 10px;background:${badgeBg};color:${badgeColor};border-radius:6px;font-size:12px;font-weight:700;letter-spacing:0.3px;margin-bottom:12px">${badgeText}</div>
       ${imageTag ? `<div style="max-width:360px;margin:0 auto 16px">${imageTag}</div>` : ''}
       <div style="font-size:32px;font-weight:700;color:#0f172a">${escapeHtml(card.word)}</div>
       <div style="margin-top:12px">${wordAudioTag}</div>
@@ -87,12 +92,14 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
   const back = `
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;max-width:540px;margin:0 auto;padding:12px">
       <div style="text-align:center">
+        <div style="display:inline-block;padding:2px 8px;background:${badgeBg};color:${badgeColor};border-radius:5px;font-size:11px;font-weight:600;margin-bottom:6px">${badgeText}</div>
         <div style="font-size:30px;font-weight:700;color:#0f172a">${escapeHtml(card.word)}</div>
-        <div style="color:#64748b;font-size:18px;margin:6px 0 16px">${escapeHtml(card.ipa)}</div>
+        <div style="color:#64748b;font-size:18px;margin:4px 0 14px">${escapeHtml(card.ipa)}</div>
       </div>
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:14px">
         <div style="font-size:18px;color:#0f172a;margin-bottom:8px"><b>🇻🇳</b> ${escapeHtml(card.vietnamese)}</div>
-        <div style="font-size:15px;color:#334155"><b>English:</b> ${escapeHtml(card.englishDefinition)}</div>
+        <div style="font-size:15px;color:#334155;margin-bottom:${card.hint ? '6px' : '0'}"><b>English:</b> ${escapeHtml(card.englishDefinition)}</div>
+        ${card.hint ? `<div style="font-size:13px;color:#64748b;margin-top:4px"><b>💡 Textbook Note:</b> <i>${escapeHtml(card.hint)}</i></div>` : ''}
       </div>
       <div style="background:#eff6ff;border-left:4px solid #3b82f6;border-radius:0 8px 8px 0;padding:12px 16px">
         <div style="font-size:15px;color:#1e293b"><i>${escapeHtml(card.example)}</i> ${exampleAudioTag}</div>
@@ -100,7 +107,9 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
     </div>`
 
   const tag = card.unitNumber ? `unit-${String(card.unitNumber).padStart(2, '0')}` : 'vocabulary'
-  apkg.addCard(front, back, { tags: ['vocabulary', tag] })
+  const tags = ['vocabulary', tag]
+  if (isPhrase) tags.push('phrases')
+  apkg.addCard(front, back, { tags })
 }
 
 async function addNoteCard(apkg: AnkiExport, card: NoteCard, index: number) {

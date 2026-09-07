@@ -116,12 +116,20 @@ function HomePage() {
   const [checkedWords, setCheckedWords] = useState<Record<string, boolean>>({})
   const [wordFilter, setWordFilter] = useState('')
 
+  const [allPhrases, setAllPhrases] = useState<string[]>([])
+  const [checkedPhrases, setCheckedPhrases] = useState<Record<string, boolean>>({})
+  const [phraseFilter, setPhraseFilter] = useState('')
+  const [phraseHints, setPhraseHints] = useState<Record<string, string>>({})
+  const [itemImages, setItemImages] = useState<Record<string, string>>({})
+
   const [allNotes, setAllNotes] = useState<ExtractedNote[]>([])
   const [checkedNotes, setCheckedNotes] = useState<Record<string, boolean>>({})
 
   // Generated Cards State
   const [cards, setCards] = useState<AnyAnkiCard[]>([])
-  const [cardFilterType, setCardFilterType] = useState<'all' | 'vocabulary' | 'note'>('all')
+  const [cardFilterType, setCardFilterType] = useState<
+    'all' | 'word' | 'phrase' | 'note'
+  >('all')
 
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -200,6 +208,11 @@ function HomePage() {
     [allWords, checkedWords],
   )
 
+  const selectedPhrases = useMemo(
+    () => allPhrases.filter((p) => checkedPhrases[p] !== false),
+    [allPhrases, checkedPhrases],
+  )
+
   const selectedNotes = useMemo(
     () => allNotes.filter((n) => checkedNotes[n.id] !== false),
     [allNotes, checkedNotes],
@@ -211,18 +224,24 @@ function HomePage() {
     return allWords.filter((w) => w.toLowerCase().includes(q))
   }, [allWords, wordFilter])
 
+  const filteredPhrases = useMemo(() => {
+    if (!phraseFilter.trim()) return allPhrases
+    const q = phraseFilter.toLowerCase()
+    return allPhrases.filter((p) => p.toLowerCase().includes(q))
+  }, [allPhrases, phraseFilter])
+
   const selectedCards = useMemo(
     () => cards.filter((c) => c.selected),
     [cards],
   )
 
-  const displayedCards = useMemo(() => {
-    if (cardFilterType === 'all') return cards
-    return cards.filter((c) => c.type === cardFilterType)
-  }, [cards, cardFilterType])
+  const wordCardCount = useMemo(
+    () => cards.filter((c) => c.type === 'vocabulary' && c.kind !== 'phrase').length,
+    [cards],
+  )
 
-  const vocabCardCount = useMemo(
-    () => cards.filter((c) => c.type === 'vocabulary').length,
+  const phraseCardCount = useMemo(
+    () => cards.filter((c) => c.type === 'vocabulary' && c.kind === 'phrase').length,
     [cards],
   )
 
@@ -230,6 +249,15 @@ function HomePage() {
     () => cards.filter((c) => c.type === 'note').length,
     [cards],
   )
+
+  const displayedCards = useMemo(() => {
+    if (cardFilterType === 'all') return cards
+    if (cardFilterType === 'word')
+      return cards.filter((c) => c.type === 'vocabulary' && c.kind !== 'phrase')
+    if (cardFilterType === 'phrase')
+      return cards.filter((c) => c.type === 'vocabulary' && c.kind === 'phrase')
+    return cards.filter((c) => c.type === 'note')
+  }, [cards, cardFilterType])
 
   function getStoredToken(): string | undefined {
     if (typeof window === 'undefined') return undefined
@@ -259,8 +287,20 @@ function HomePage() {
       setAllWords(result.words)
       setCheckedWords(Object.fromEntries(result.words.map((w) => [w, true])))
 
+      setAllPhrases(result.phrases)
+      setCheckedPhrases(Object.fromEntries(result.phrases.map((p) => [p, true])))
+
+      const hints: Record<string, string> = {}
+      const images: Record<string, string> = {}
+      for (const item of result.vocabularyList) {
+        if (item.hint) hints[item.word] = item.hint
+        if (item.image) images[item.word] = item.image
+      }
+      setPhraseHints(hints)
+      setItemImages(images)
+
       setAllNotes(result.notes)
-      setCheckedNotes(Object.fromEntries(result.notes.map((n) => [n.id, true])))
+      setCheckedNotes(Object.fromEntries(result.notes.map((n) => [n.id, false])))
 
       const bookPrefix = result.bookTitle || 'English Vocabulary in Use'
       const cleanUnitTitle =
@@ -268,7 +308,7 @@ function HomePage() {
         result.title
       setDeckName(`${bookPrefix}::${cleanUnitTitle}`)
       setStatus(
-        `Đã tìm thấy ${result.words.length} từ vựng và ${result.notes.length} phần ghi chú bài học.`,
+        `Đã bóc tách thành công: ${result.words.length} từ vựng, ${result.phrases.length} cụm từ/thành ngữ và ${result.notes.length} phần ghi chú bài học.`,
       )
       setStep(2)
     } catch (err) {
@@ -292,32 +332,49 @@ function HomePage() {
       setError('Vui lòng nhập ít nhất 1 từ vựng.')
       return
     }
+    const words: string[] = []
+    const phrases: string[] = []
+    for (const item of parsed) {
+      if (item.includes(' ') || item.includes('-')) {
+        phrases.push(item)
+      } else {
+        words.push(item)
+      }
+    }
     setLesson(null)
-    setAllWords(parsed)
-    setCheckedWords(Object.fromEntries(parsed.map((w) => [w, true])))
+    setAllWords(words)
+    setCheckedWords(Object.fromEntries(words.map((w) => [w, true])))
+    setAllPhrases(phrases)
+    setCheckedPhrases(Object.fromEntries(phrases.map((p) => [p, true])))
+    setPhraseHints({})
+    setItemImages({})
     setAllNotes([])
     setCheckedNotes({})
-    setStatus(`Đã ghi nhận ${parsed.length} từ vựng từ danh sách.`)
+    setStatus(
+      `Đã ghi nhận ${words.length} từ vựng và ${phrases.length} cụm từ từ danh sách.`,
+    )
     setStep(2)
   }
 
   async function onGenerateCards() {
-    if (!selectedWords.length && !selectedNotes.length) {
-      setError('Vui lòng chọn ít nhất 1 từ vựng hoặc 1 mục ghi chú.')
+    const totalVocabItems = [...selectedWords, ...selectedPhrases]
+    if (!totalVocabItems.length && !selectedNotes.length) {
+      setError('Vui lòng chọn ít nhất 1 từ vựng, cụm từ hoặc ghi chú.')
       return
     }
     setError('')
     setStatus(
-      `Đang dùng TanStack AI tạo thẻ cho ${selectedWords.length} từ vựng và ${selectedNotes.length} ghi chú…`,
+      `Đang dùng TanStack AI tạo thẻ cho ${selectedWords.length} từ vựng, ${selectedPhrases.length} cụm từ và ${selectedNotes.length} ghi chú…`,
     )
     setIsGenerating(true)
 
     try {
       const token = getStoredToken()
+      const phraseSet = new Set(selectedPhrases)
 
       const promises: [Promise<any>, Promise<any>] = [
-        selectedWords.length > 0
-          ? generateVocabulary({ data: { words: selectedWords, token } })
+        totalVocabItems.length > 0
+          ? generateVocabulary({ data: { words: totalVocabItems, token } })
           : Promise.resolve([]),
         selectedNotes.length > 0
           ? generateNotes({
@@ -335,17 +392,25 @@ function HomePage() {
       const [generatedVocab, generatedNotes] = await Promise.all(promises)
 
       const vocabCards: VocabularyCard[] = generatedVocab.map(
-        (item: any, index: number): VocabularyCard => ({
-          type: 'vocabulary',
-          id: `vocab-${Date.now()}-${index}`,
-          selected: true,
-          unitNumber: lesson?.unitNumber,
-          ...item,
-          imageUrl: getBingImageUrl(item.imageQuery),
-          wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 1),
-          exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 1),
-          sourceUrl: lesson?.sourceUrl ?? 'custom-input',
-        }),
+        (item: any, index: number): VocabularyCard => {
+          const isPhrase = phraseSet.has(item.word) || item.word.includes(' ')
+          const customImg = itemImages[item.word]
+          const hint = phraseHints[item.word]
+
+          return {
+            type: 'vocabulary',
+            id: `vocab-${Date.now()}-${index}`,
+            selected: true,
+            unitNumber: lesson?.unitNumber,
+            kind: isPhrase ? 'phrase' : 'word',
+            hint,
+            ...item,
+            imageUrl: customImg || getBingImageUrl(item.imageQuery),
+            wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 1),
+            exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 1),
+            sourceUrl: lesson?.sourceUrl ?? 'custom-input',
+          }
+        },
       )
 
       const noteCards: NoteCard[] = generatedNotes.map(
@@ -366,7 +431,7 @@ function HomePage() {
       const nextCards: AnyAnkiCard[] = [...vocabCards, ...noteCards]
       setCards(nextCards)
       setStatus(
-        `Đã tạo thành công ${nextCards.length} thẻ (${vocabCards.length} từ vựng, ${noteCards.length} ghi chú).`,
+        `Đã tạo thành công ${nextCards.length} thẻ (${selectedWords.length} từ vựng, ${selectedPhrases.length} cụm từ, ${noteCards.length} ghi chú).`,
       )
       setStep(3)
     } catch (err) {
@@ -611,8 +676,15 @@ function HomePage() {
           {/* Step 2 Tab */}
           <button
             type="button"
-            onClick={() => (allWords.length > 0 || allNotes.length > 0) && setStep(2)}
-            disabled={allWords.length === 0 && allNotes.length === 0}
+            onClick={() =>
+              (allWords.length > 0 || allPhrases.length > 0 || allNotes.length > 0) &&
+              setStep(2)
+            }
+            disabled={
+              allWords.length === 0 &&
+              allPhrases.length === 0 &&
+              allNotes.length === 0
+            }
             className={`flex items-center justify-center gap-2 rounded-lg px-2 py-2 sm:px-4 sm:py-2.5 text-xs sm:text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
               step === 2
                 ? 'bg-primary text-primary-foreground shadow-xs font-semibold'
@@ -910,10 +982,18 @@ function HomePage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline" className="text-xs font-mono">
                     {selectedWords.length} / {allWords.length} từ vựng
                   </Badge>
+                  {allPhrases.length > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="text-xs font-mono border-purple-500/30 text-purple-600 dark:text-purple-400 bg-purple-500/10"
+                    >
+                      {selectedPhrases.length} / {allPhrases.length} cụm từ
+                    </Badge>
+                  )}
                   {allNotes.length > 0 && (
                     <Badge variant="secondary" className="text-xs font-mono">
                       {selectedNotes.length} / {allNotes.length} ghi chú
@@ -924,104 +1004,241 @@ function HomePage() {
             </CardHeader>
           </Card>
 
-          {/* Section 1: Vocabulary List */}
-          <Card className="border-border/80 bg-card/80 backdrop-blur-md">
-            <CardHeader className="pb-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <BookmarkIcon className="size-4 text-primary" aria-hidden="true" />
-                  <CardTitle className="text-base font-bold">
-                    1. Danh sách từ vựng (Vocabulary List)
-                  </CardTitle>
-                  <Badge variant="secondary" className="text-xs">
-                    {selectedWords.length} đã chọn
-                  </Badge>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    onClick={() =>
-                      setCheckedWords(Object.fromEntries(allWords.map((w) => [w, true])))
-                    }
-                  >
-                    Chọn tất cả ({allWords.length})
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() =>
-                      setCheckedWords(Object.fromEntries(allWords.map((w) => [w, false])))
-                    }
-                  >
-                    Bỏ chọn
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-
-            <CardPanel className="flex flex-col gap-4">
-              {/* Search Filter */}
-              <div className="relative">
-                <Input
-                  type="search"
-                  value={wordFilter}
-                  onChange={(e) => setWordFilter(e.target.value)}
-                  placeholder="Tìm nhanh từ vựng trong bài..."
-                  className="pl-9 text-xs sm:text-sm"
-                />
-                <SearchIcon
-                  className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-              </div>
-
-              {/* Word Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[380px] overflow-y-auto p-1 pr-2 rounded-xl border border-border/40 bg-muted/20">
-                {filteredWords.map((word) => {
-                  const isChecked = checkedWords[word] !== false
-                  return (
-                    <label
-                      key={word}
-                      className={`flex items-center gap-2.5 rounded-lg border p-2.5 text-sm font-medium cursor-pointer transition-all select-none ${
-                        isChecked
-                          ? 'border-primary/50 bg-primary/10 text-foreground shadow-xs'
-                          : 'border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:bg-card/70'
-                      }`}
-                    >
-                      <Checkbox
-                        checked={isChecked}
-                        onCheckedChange={(c) =>
-                          setCheckedWords((old) => ({ ...old, [word]: Boolean(c) }))
-                        }
-                      />
-                      <span className="truncate flex-1 font-mono text-xs sm:text-sm">
-                        {word}
-                      </span>
-                    </label>
-                  )
-                })}
-                {filteredWords.length === 0 && (
-                  <div className="col-span-full py-8 text-center text-sm text-muted-foreground">
-                    Không tìm thấy từ vựng nào khớp với &quot;{wordFilter}&quot;.
+          {/* Section 1: Vocabulary List (Single / Core Words) */}
+          {allWords.length > 0 && (
+            <Card className="border-border/80 bg-card/80 backdrop-blur-md">
+              <CardHeader className="pb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <BookmarkIcon className="size-4 text-primary" aria-hidden="true" />
+                    <CardTitle className="text-base font-bold">
+                      1. Danh sách từ vựng (Vocabulary Words)
+                    </CardTitle>
+                    <Badge variant="secondary" className="text-xs">
+                      {selectedWords.length} đã chọn
+                    </Badge>
                   </div>
-                )}
-              </div>
-            </CardPanel>
-          </Card>
 
-          {/* Section 2: Language Notes / Important Phrases */}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() =>
+                        setCheckedWords(
+                          Object.fromEntries(allWords.map((w) => [w, true])),
+                        )
+                      }
+                    >
+                      Chọn tất cả ({allWords.length})
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        setCheckedWords(
+                          Object.fromEntries(allWords.map((w) => [w, false])),
+                        )
+                      }
+                    >
+                      Bỏ chọn
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardPanel className="flex flex-col gap-4">
+                {/* Search Filter */}
+                <div className="relative">
+                  <Input
+                    type="search"
+                    value={wordFilter}
+                    onChange={(e) => setWordFilter(e.target.value)}
+                    placeholder="Tìm nhanh từ vựng..."
+                    className="pl-9 text-xs sm:text-sm"
+                  />
+                  <SearchIcon
+                    className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                </div>
+
+                {/* Word Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[380px] overflow-y-auto p-1 pr-2 rounded-xl border border-border/40 bg-muted/20">
+                  {filteredWords.map((word) => {
+                    const isChecked = checkedWords[word] !== false
+                    return (
+                      <label
+                        key={word}
+                        className={`flex items-center gap-2.5 rounded-lg border p-2.5 text-sm font-medium cursor-pointer transition-all select-none ${
+                          isChecked
+                            ? 'border-primary/50 bg-primary/10 text-foreground shadow-xs'
+                            : 'border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:bg-card/70'
+                        }`}
+                      >
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={(c) =>
+                            setCheckedWords((old) => ({
+                              ...old,
+                              [word]: Boolean(c),
+                            }))
+                          }
+                        />
+                        <span className="truncate flex-1 font-mono text-xs sm:text-sm">
+                          {word}
+                        </span>
+                      </label>
+                    )
+                  })}
+                  {filteredWords.length === 0 && (
+                    <div className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                      Không tìm thấy từ vựng nào khớp với &quot;{wordFilter}&quot;.
+                    </div>
+                  )}
+                </div>
+              </CardPanel>
+            </Card>
+          )}
+
+          {/* Section 2: Key Phrases & Expressions (Split into Individual Flashcards) */}
+          {allPhrases.length > 0 && (
+            <Card className="border-border/80 bg-card/80 backdrop-blur-md">
+              <CardHeader className="pb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <SparklesIcon className="size-4 text-purple-500" aria-hidden="true" />
+                    <CardTitle className="text-base font-bold">
+                      2. Cụm từ &amp; Thành ngữ bài học (Key Phrases &amp; Expressions)
+                    </CardTitle>
+                    <Badge
+                      variant="outline"
+                      className="text-xs border-purple-500/30 text-purple-600 dark:text-purple-400 bg-purple-500/10"
+                    >
+                      {selectedPhrases.length} đã chọn
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      onClick={() =>
+                        setCheckedPhrases(
+                          Object.fromEntries(allPhrases.map((p) => [p, true])),
+                        )
+                      }
+                    >
+                      Chọn tất cả ({allPhrases.length})
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        setCheckedPhrases(
+                          Object.fromEntries(allPhrases.map((p) => [p, false])),
+                        )
+                      }
+                    >
+                      Bỏ chọn
+                    </Button>
+                  </div>
+                </div>
+                <CardDescription className="text-xs">
+                  Mỗi cụm từ/thành ngữ dưới đây sẽ được tạo thành{' '}
+                  <strong className="text-foreground">1 thẻ từ vựng Anki độc lập</strong>{' '}
+                  (có phiên âm, dịch nghĩa tiếng Việt, định nghĩa tiếng Anh, câu ví dụ và âm thanh riêng).
+                </CardDescription>
+              </CardHeader>
+
+              <CardPanel className="flex flex-col gap-4">
+                {/* Search Filter for Phrases */}
+                <div className="relative">
+                  <Input
+                    type="search"
+                    value={phraseFilter}
+                    onChange={(e) => setPhraseFilter(e.target.value)}
+                    placeholder="Tìm nhanh cụm từ / thành ngữ trong bài..."
+                    className="pl-9 text-xs sm:text-sm"
+                  />
+                  <SearchIcon
+                    className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                </div>
+
+                {/* Phrases Grid / List */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[420px] overflow-y-auto p-1 pr-2 rounded-xl border border-border/40 bg-muted/20">
+                  {filteredPhrases.map((phrase) => {
+                    const isChecked = checkedPhrases[phrase] !== false
+                    const hint = phraseHints[phrase]
+                    const hasOriginalImage = Boolean(itemImages[phrase])
+
+                    return (
+                      <label
+                        key={phrase}
+                        className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-all select-none ${
+                          isChecked
+                            ? 'border-purple-500/50 bg-purple-500/10 text-foreground shadow-xs'
+                            : 'border-border/40 bg-card/40 text-muted-foreground hover:border-border hover:bg-card/70'
+                        }`}
+                      >
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={(c) =>
+                            setCheckedPhrases((old) => ({
+                              ...old,
+                              [phrase]: Boolean(c),
+                            }))
+                          }
+                          className="mt-0.5"
+                        />
+                        <div className="flex-1 min-w-0 flex flex-col gap-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-sm font-mono text-foreground">
+                              {phrase}
+                            </span>
+                            {hasOriginalImage && (
+                              <Badge
+                                variant="secondary"
+                                className="text-[0.65rem] px-1.5 py-0 h-4 font-normal"
+                              >
+                                Ảnh SGK
+                              </Badge>
+                            )}
+                          </div>
+                          {hint && (
+                            <span className="text-xs text-muted-foreground/90 italic truncate">
+                              💡 {hint}
+                            </span>
+                          )}
+                        </div>
+                      </label>
+                    )
+                  })}
+                  {filteredPhrases.length === 0 && (
+                    <div className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                      Không tìm thấy cụm từ nào khớp với &quot;{phraseFilter}&quot;.
+                    </div>
+                  )}
+                </div>
+              </CardPanel>
+            </Card>
+          )}
+
+          {/* Section 3: Language Notes (General Grammar & Rules) */}
           {allNotes.length > 0 && (
             <Card className="border-border/80 bg-card/80 backdrop-blur-md">
               <CardHeader className="pb-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2.5">
-                    <SparklesIcon className="size-4 text-amber-500" aria-hidden="true" />
+                    <FileTextIcon className="size-4 text-amber-500" aria-hidden="true" />
                     <CardTitle className="text-base font-bold">
-                      2. Ghi chú quan trọng & Cụm từ (Language Notes)
+                      3. Ghi chú quy tắc &amp; Lời khuyên (Language Notes)
                     </CardTitle>
-                    <Badge variant="outline" className="text-xs border-amber-500/30 text-amber-500">
+                    <Badge
+                      variant="outline"
+                      className="text-xs border-amber-500/30 text-amber-500 bg-amber-500/10"
+                    >
                       {selectedNotes.length} đã chọn
                     </Badge>
                   </div>
@@ -1031,7 +1248,9 @@ function HomePage() {
                       variant="outline"
                       size="xs"
                       onClick={() =>
-                        setCheckedNotes(Object.fromEntries(allNotes.map((n) => [n.id, true])))
+                        setCheckedNotes(
+                          Object.fromEntries(allNotes.map((n) => [n.id, true])),
+                        )
                       }
                     >
                       Chọn tất cả ({allNotes.length})
@@ -1040,7 +1259,9 @@ function HomePage() {
                       variant="ghost"
                       size="xs"
                       onClick={() =>
-                        setCheckedNotes(Object.fromEntries(allNotes.map((n) => [n.id, false])))
+                        setCheckedNotes(
+                          Object.fromEntries(allNotes.map((n) => [n.id, false])),
+                        )
                       }
                     >
                       Bỏ chọn
@@ -1048,7 +1269,7 @@ function HomePage() {
                   </div>
                 </div>
                 <CardDescription className="text-xs">
-                  Mỗi ghi chú sẽ được AI chuyển thành 1 Note Card trong Anki (tóm tắt cụm từ, giải thích tiếng Việt và câu ví dụ).
+                  Tùy chọn tạo thêm thẻ ghi chú quy tắc hoặc lưu ý tổng quan của bài học (mỗi mục thành 1 Note Card).
                 </CardDescription>
               </CardHeader>
 
@@ -1069,7 +1290,10 @@ function HomePage() {
                           <Checkbox
                             checked={isChecked}
                             onCheckedChange={(c) =>
-                              setCheckedNotes((old) => ({ ...old, [note.id]: Boolean(c) }))
+                              setCheckedNotes((old) => ({
+                                ...old,
+                                [note.id]: Boolean(c),
+                              }))
                             }
                           />
                           <span className="font-bold text-sm text-foreground">
@@ -1077,21 +1301,21 @@ function HomePage() {
                           </span>
                         </label>
                         {note.sectionLetter && (
-                          <Badge variant="secondary" className="font-mono text-xs font-bold">
+                          <Badge
+                            variant="secondary"
+                            className="font-mono text-xs font-bold"
+                          >
                             Mục {note.sectionLetter}
                           </Badge>
                         )}
                       </div>
 
-                      {/* Content phrases snippet */}
-                      <div className="pl-6 flex flex-wrap gap-1.5 pt-1">
-                        {note.content.map((phrase, pIdx) => (
-                          <span
-                            key={pIdx}
-                            className="inline-block rounded-md bg-muted/60 px-2 py-0.5 text-xs text-foreground/85 border border-border/40"
-                          >
-                            {phrase}
-                          </span>
+                      {/* Content snippet */}
+                      <div className="pl-6 flex flex-col gap-1 pt-1 text-xs text-muted-foreground">
+                        {note.content.map((line, pIdx) => (
+                          <div key={pIdx} className="leading-relaxed">
+                            • {line}
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -1111,12 +1335,23 @@ function HomePage() {
             <Button
               onClick={onGenerateCards}
               loading={isGenerating}
-              disabled={selectedWords.length === 0 && selectedNotes.length === 0}
+              disabled={
+                selectedWords.length === 0 &&
+                selectedPhrases.length === 0 &&
+                selectedNotes.length === 0
+              }
               className="gap-2 font-semibold shadow-md"
             >
               <SparklesIcon className="size-4" aria-hidden="true" />
-              Tạo Anki Deck ({selectedWords.length} từ vựng
-              {selectedNotes.length > 0 ? `, ${selectedNotes.length} ghi chú` : ''})
+              Tạo Anki Deck (
+              {[
+                selectedWords.length > 0 ? `${selectedWords.length} từ vựng` : '',
+                selectedPhrases.length > 0 ? `${selectedPhrases.length} cụm từ` : '',
+                selectedNotes.length > 0 ? `${selectedNotes.length} ghi chú` : '',
+              ]
+                .filter(Boolean)
+                .join(', ') || 'Chưa chọn nội dung'}
+              )
               <ArrowRightIcon className="size-4" aria-hidden="true" />
             </Button>
           </div>
@@ -1138,7 +1373,8 @@ function HomePage() {
                     <CardTitle className="text-xl">Bước 3: Xem & Tinh chỉnh thẻ Anki</CardTitle>
                     <CardDescription>
                       Đã tạo <span className="font-semibold text-foreground">{cards.length}</span> thẻ
-                      flashcard ({vocabCardCount} từ vựng, {noteCardCount} ghi chú). Bạn có thể chỉnh sửa trước khi xuất file.
+                      flashcard ({wordCardCount} từ vựng, {phraseCardCount} cụm từ
+                      {noteCardCount > 0 ? `, ${noteCardCount} ghi chú` : ''}). Bạn có thể chỉnh sửa trước khi xuất file.
                     </CardDescription>
                   </div>
                 </div>
@@ -1173,7 +1409,7 @@ function HomePage() {
               </div>
 
               {/* Card Type Filter Buttons */}
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 <span className="text-xs font-semibold text-muted-foreground">Lọc hiển thị:</span>
                 <Button
                   variant={cardFilterType === 'all' ? 'default' : 'outline'}
@@ -1183,12 +1419,21 @@ function HomePage() {
                   Tất cả ({cards.length})
                 </Button>
                 <Button
-                  variant={cardFilterType === 'vocabulary' ? 'default' : 'outline'}
+                  variant={cardFilterType === 'word' ? 'default' : 'outline'}
                   size="xs"
-                  onClick={() => setCardFilterType('vocabulary')}
+                  onClick={() => setCardFilterType('word')}
                 >
-                  Từ vựng ({vocabCardCount})
+                  Từ vựng ({wordCardCount})
                 </Button>
+                {phraseCardCount > 0 && (
+                  <Button
+                    variant={cardFilterType === 'phrase' ? 'default' : 'outline'}
+                    size="xs"
+                    onClick={() => setCardFilterType('phrase')}
+                  >
+                    Cụm từ ({phraseCardCount})
+                  </Button>
+                )}
                 {noteCardCount > 0 && (
                   <Button
                     variant={cardFilterType === 'note' ? 'default' : 'outline'}
@@ -1340,12 +1585,26 @@ function HomePage() {
                       <span className="flex size-6 items-center justify-center rounded-md bg-muted text-xs font-mono font-bold text-muted-foreground">
                         #{realIndex + 1}
                       </span>
-                      <Badge variant="outline" className="text-primary font-bold text-xs">
-                        VOCABULARY
-                      </Badge>
+                      {card.kind === 'phrase' ? (
+                        <Badge
+                          variant="outline"
+                          className="border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10 font-bold text-xs"
+                        >
+                          PHRASE / IDIOM
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-primary font-bold text-xs">
+                          VOCABULARY
+                        </Badge>
+                      )}
                       <CardFrameTitle className="text-base font-bold text-foreground">
                         {card.word}
                       </CardFrameTitle>
+                      {card.hint && (
+                        <span className="text-xs text-muted-foreground bg-muted/70 px-2 py-0.5 rounded border border-border/40 font-normal">
+                          💡 {card.hint}
+                        </span>
+                      )}
                       {card.ipa && (
                         <Badge variant="outline" className="font-mono text-xs">
                           {card.ipa}

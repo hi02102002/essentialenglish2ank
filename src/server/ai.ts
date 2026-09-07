@@ -37,23 +37,11 @@ function extractJson(text: string): string {
   return cleaned
 }
 
-export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabulary[]> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
-  }
-
-  const baseURL = process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
-  const model = process.env.OPENAI_MODEL || 'gpt-5-6'
-
-  const adapter = openaiCompatibleText(model, {
-    baseURL,
-    apiKey,
-  })
-
-  const systemPrompt =
-    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions exactly. IPA should be standard learner-friendly English IPA. Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks.\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
-
+async function enrichVocabularyBatch(
+  words: string[],
+  adapter: any,
+  systemPrompt: string,
+): Promise<GeneratedVocabulary[]> {
   const userPrompt = `Create flashcards for each item, preserving exact item order. Return JSON {"cards": [...]}:\n${words
     .map((word, i) => `${i + 1}. ${word}`)
     .join('\n')}`
@@ -61,7 +49,6 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
   let rawCards: z.infer<typeof FlashcardSchema>[] = []
 
   try {
-    // 1. Primary path: TanStack AI with typed structured outputSchema
     const res = await chat({
       adapter,
       systemPrompts: [systemPrompt],
@@ -81,7 +68,6 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
       )
     }
 
-    // 2. Resilient fallback: If proxy returned unparsed/fenced JSON, call chat with stream: false and validate
     try {
       const textOutput = await chat({
         adapter,
@@ -102,20 +88,50 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
     }
   }
 
-  if (rawCards.length !== words.length) {
-    throw new Error(`AI returned ${rawCards.length} cards for ${words.length} words.`)
+  return words.map((origWord, index) => {
+    const item = rawCards[index]
+    return {
+      word: String(item?.word || origWord || '').trim(),
+      ipa: String(item?.ipa || '').trim(),
+      vietnamese: String(item?.vietnamese || '').trim(),
+      englishDefinition: String(item?.englishDefinition || '').trim(),
+      example: String(item?.example || '').trim(),
+      imageQuery: String(item?.imageQuery || item?.word || origWord || '').trim(),
+    }
+  })
+}
+
+export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabulary[]> {
+  if (!words.length) return []
+
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
   }
 
-  const cards: GeneratedVocabulary[] = rawCards.map((item, index) => ({
-    word: String(item.word || words[index] || '').trim(),
-    ipa: String(item.ipa || '').trim(),
-    vietnamese: String(item.vietnamese || '').trim(),
-    englishDefinition: String(item.englishDefinition || '').trim(),
-    example: String(item.example || '').trim(),
-    imageQuery: String(item.imageQuery || item.word || words[index] || '').trim(),
-  }))
+  const baseURL =
+    process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
+  const model = process.env.OPENAI_MODEL || 'gpt-5-6'
 
-  return cards
+  const adapter = openaiCompatibleText(model, {
+    baseURL,
+    apiKey,
+  })
+
+  const systemPrompt =
+    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should be standard learner-friendly English IPA. Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks.\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+
+  const BATCH_SIZE = 12
+  const batches: string[][] = []
+  for (let i = 0; i < words.length; i += BATCH_SIZE) {
+    batches.push(words.slice(i, i + BATCH_SIZE))
+  }
+
+  const results = await Promise.all(
+    batches.map((batch) => enrichVocabularyBatch(batch, adapter, systemPrompt)),
+  )
+
+  return results.flat()
 }
 
 export const NoteSchema = z.object({
