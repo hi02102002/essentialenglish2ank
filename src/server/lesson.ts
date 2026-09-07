@@ -226,13 +226,27 @@ function resolveImageUrl(
   datasetUrl: string,
 ): string | undefined {
   if (!img) return undefined
-  if (/^https?:\/\//i.test(img)) return img
+  const trimmed = img.trim()
+  if (!trimmed) return undefined
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+
+  // Dead phantom filenames in essentialenglish dataset (e.g. 36178.jpg, 35900.jpg)
+  // All purely numeric image filenames in wordlist return 404 Not Found on the server.
+  if (/^\d+\.(?:jpe?g|png|webp|gif|svg)$/i.test(trimmed)) {
+    return undefined
+  }
+
+  // Filter out speaker/audio icons or UI buttons
+  if (/\b(?:icon|speaker|button|arrow|close|play)\b/i.test(trimmed)) {
+    return undefined
+  }
+
   try {
     const parsed = new URL(datasetUrl)
     const basePath = parsed.pathname.replace(/\/data\/data\.json$/i, '')
-    return `${parsed.origin}${basePath}/${img.replace(/^\//, '')}`
+    return `${parsed.origin}${basePath}/${trimmed.replace(/^\/+/, '')}`
   } catch {
-    return img
+    return undefined
   }
 }
 

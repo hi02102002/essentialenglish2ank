@@ -23,6 +23,7 @@ import {
   BookmarkIcon,
   CompassIcon,
   InfoIcon,
+  ImageIcon,
 } from 'lucide-react'
 import {
   analyzeLesson,
@@ -85,6 +86,208 @@ function parseCustomWords(text: string): string[] {
         .map((w) => w.replace(/^[-*•\d.]+\s*/, '').trim())
         .filter((w) => w.length > 0),
     ),
+  )
+}
+
+function VocabularyImageEditor({
+  card,
+  realIndex,
+  patchCard,
+}: {
+  card: VocabularyCard
+  realIndex: number
+  patchCard: (index: number, patch: Partial<AnyAnkiCard>) => void
+}) {
+  const [failedDirect, setFailedDirect] = useState(false)
+  const [failedProxy, setFailedProxy] = useState(false)
+  const [isReloading, setIsReloading] = useState(false)
+  const [seed, setSeed] = useState(0)
+  const [showCustomUrl, setShowCustomUrl] = useState(false)
+  const [isLoaded, setIsLoaded] = useState(false)
+
+  // Reset errors whenever card.imageUrl changes externally
+  useEffect(() => {
+    setFailedDirect(false)
+    setFailedProxy(false)
+    setIsLoaded(false)
+  }, [card.imageUrl])
+
+  const targetUrl =
+    card.imageUrl || (card.imageQuery ? getBingImageUrl(card.imageQuery, seed) : '')
+
+  const displaySrc = useMemo(() => {
+    if (!targetUrl) return ''
+    if (failedDirect && !failedProxy) {
+      return `/api/image-proxy?url=${encodeURIComponent(targetUrl)}`
+    }
+    return targetUrl
+  }, [targetUrl, failedDirect, failedProxy])
+
+  const handleReload = (newQuery?: string) => {
+    setIsReloading(true)
+    const nextSeed = seed + 1
+    setSeed(nextSeed)
+    setFailedDirect(false)
+    setFailedProxy(false)
+    setIsLoaded(false)
+    const query = (newQuery ?? card.imageQuery).trim() || card.word
+    const newUrl = getBingImageUrl(query, nextSeed)
+    patchCard(realIndex, {
+      imageUrl: newUrl,
+      imageQuery: query,
+    })
+    setTimeout(() => setIsReloading(false), 400)
+  }
+
+  const handleResetToQuery = () => {
+    setFailedDirect(false)
+    setFailedProxy(false)
+    setIsLoaded(false)
+    const query = card.imageQuery.trim() || card.word
+    patchCard(realIndex, {
+      imageUrl: getBingImageUrl(query, seed),
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Image Preview Container */}
+      <div className="relative aspect-square w-full overflow-hidden rounded-xl border border-border/60 bg-muted/40 shadow-xs group">
+        {displaySrc && !failedProxy ? (
+          <>
+            <img
+              src={displaySrc}
+              alt={card.word}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+              onLoad={() => setIsLoaded(true)}
+              onError={() => {
+                if (!failedDirect) {
+                  // Direct loading failed, fallback automatically to server proxy
+                  setFailedDirect(true)
+                } else {
+                  // Both direct and proxy failed
+                  setFailedProxy(true)
+                }
+              }}
+              className={`size-full object-cover transition-all duration-300 group-hover:scale-105 ${
+                isLoaded ? 'opacity-100' : 'opacity-0'
+              }`}
+            />
+            {!isLoaded && (
+              <div className="absolute inset-0 flex items-center justify-center bg-muted/30 animate-pulse text-xs text-muted-foreground">
+                <RefreshCwIcon className="size-4 animate-spin text-muted-foreground/60" />
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-3 text-center bg-muted/40 gap-2">
+            <div className="size-8 rounded-full bg-amber-500/10 text-amber-500 flex items-center justify-center">
+              <AlertCircleIcon className="size-4" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xs font-semibold text-foreground">Không tải được ảnh</span>
+              <span className="text-[0.68rem] text-muted-foreground mt-0.5">
+                Nguồn ảnh bị chặn hoặc không khả dụng
+              </span>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => handleReload()}
+              disabled={isReloading}
+              className="text-xs h-7 px-2.5 mt-1"
+            >
+              <RefreshCwIcon
+                className={`size-3 mr-1.5 ${isReloading ? 'animate-spin' : ''}`}
+              />
+              Thử ảnh khác
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Bing Image Query row */}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+            Bing Image Query
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowCustomUrl((v) => !v)}
+            className="text-[0.7rem] text-primary hover:underline font-medium inline-flex items-center gap-1 cursor-pointer"
+          >
+            <LinkIcon className="size-2.5" />
+            {showCustomUrl ? 'Ẩn URL' : 'Sửa URL'}
+          </button>
+        </div>
+
+        <div className="flex gap-1.5">
+          <Input
+            size="sm"
+            value={card.imageQuery}
+            onChange={(e) => patchCard(realIndex, { imageQuery: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                handleReload(card.imageQuery)
+              }
+            }}
+            aria-label="Từ khóa tìm ảnh Bing"
+            className="font-mono text-xs"
+            placeholder="Từ khóa tìm ảnh..."
+          />
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="outline"
+            title="Đổi sang hình ảnh khác (làm mới ảnh)"
+            disabled={isReloading}
+            onClick={() => handleReload()}
+          >
+            <RefreshCwIcon
+              className={`size-3.5 ${isReloading ? 'animate-spin text-primary' : ''}`}
+              aria-hidden="true"
+            />
+          </Button>
+        </div>
+
+        {/* Optional Direct URL Input */}
+        {showCustomUrl && (
+          <div className="flex flex-col gap-1 mt-1 p-2 rounded-lg bg-muted/40 border border-border/40">
+            <label className="text-[0.68rem] text-muted-foreground font-medium">
+              Dán URL ảnh trực tiếp:
+            </label>
+            <div className="flex gap-1">
+              <Input
+                size="sm"
+                value={card.imageUrl}
+                onChange={(e) => {
+                  setFailedDirect(false)
+                  setFailedProxy(false)
+                  setIsLoaded(false)
+                  patchCard(realIndex, { imageUrl: e.target.value.trim() })
+                }}
+                className="font-mono text-[0.7rem] h-7"
+                placeholder="https://... dán link ảnh"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                title="Khôi phục ảnh từ query Bing"
+                onClick={handleResetToQuery}
+                className="text-[0.68rem] h-7 px-2"
+              >
+                Reset
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -455,7 +658,9 @@ function HomePage() {
         const next: any = { ...card, ...patch }
         if (next.type === 'vocabulary') {
           const vPatch = patch as Partial<VocabularyCard>
-          if (vPatch.imageQuery !== undefined) {
+          if (vPatch.imageUrl !== undefined) {
+            next.imageUrl = vPatch.imageUrl
+          } else if (vPatch.imageQuery !== undefined) {
             next.imageUrl = getBingImageUrl(vPatch.imageQuery)
           }
           if (vPatch.word !== undefined) {
@@ -1633,43 +1838,11 @@ function HomePage() {
                   {/* Body: Two columns layout */}
                   <div className="p-5 grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6">
                     {/* Left Column: Image & Image Query */}
-                    <div className="flex flex-col gap-3">
-                      <div className="relative aspect-square w-full overflow-hidden rounded-xl border border-border/60 bg-muted/40 shadow-xs group">
-                        <img
-                          src={card.imageUrl}
-                          alt={card.word}
-                          className="size-full object-cover transition-transform group-hover:scale-105"
-                          loading="lazy"
-                        />
-                      </div>
-
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                          Bing Image Query
-                        </label>
-                        <div className="flex gap-1.5">
-                          <Input
-                            size="sm"
-                            value={card.imageQuery}
-                            onChange={(e) =>
-                              patchCard(realIndex, { imageQuery: e.target.value })
-                            }
-                            aria-label="Từ khóa tìm ảnh Bing"
-                            className="font-mono text-xs"
-                          />
-                          <Button
-                            size="icon-sm"
-                            variant="outline"
-                            title="Tải lại hình ảnh theo query mới"
-                            onClick={() =>
-                              patchCard(realIndex, { imageQuery: card.imageQuery.trim() })
-                            }
-                          >
-                            <RefreshCwIcon className="size-3.5" aria-hidden="true" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
+                    <VocabularyImageEditor
+                      card={card}
+                      realIndex={realIndex}
+                      patchCard={patchCard}
+                    />
 
                     {/* Right Column: Editable fields & Audio buttons */}
                     <div className="flex flex-col gap-4">

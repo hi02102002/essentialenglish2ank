@@ -2,6 +2,7 @@ import AnkiExport from 'anki-apkg-export'
 import type { AnyAnkiCard, NoteCard, VocabularyCard } from '@/lib/types'
 import { downloadMedia } from './media'
 import { getYoudaoUnsignedVoiceUrl } from '@/lib/youdao'
+import { getBingImageUrl, getBingAlternativeUrl } from '@/lib/bing-image'
 
 function getAnkiExporter(): new (deckName: string) => AnkiExport {
   const mod: any = AnkiExport
@@ -320,14 +321,33 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
   let wordAudioTag = ''
   let exampleAudioTag = ''
 
-  if (card.imageUrl) {
+  const targetImageUrl = card.imageUrl || (card.imageQuery ? getBingImageUrl(card.imageQuery) : '')
+  if (targetImageUrl) {
     try {
-      const image = await downloadMedia(card.imageUrl, 'jpg')
+      const image = await downloadMedia(targetImageUrl, 'jpg')
       const filename = `${base}.${image.extension}`
       apkg.addMedia(filename, image.buffer)
       imageTag = `<img src="${filename}" alt="${escapeHtml(card.word)}" style="max-height:220px;max-width:100%;object-fit:cover;border-radius:8px">`
     } catch {
-      imageTag = ''
+      // Fallback: If primary image URL failed (e.g. 404 or blocked), try fetching via Bing alternative or query
+      const fallbackUrl = card.imageQuery
+        ? targetImageUrl !== getBingAlternativeUrl(card.imageQuery)
+          ? getBingAlternativeUrl(card.imageQuery)
+          : getBingImageUrl(card.imageQuery)
+        : ''
+
+      if (fallbackUrl) {
+        try {
+          const image = await downloadMedia(fallbackUrl, 'jpg')
+          const filename = `${base}.${image.extension}`
+          apkg.addMedia(filename, image.buffer)
+          imageTag = `<img src="${filename}" alt="${escapeHtml(card.word)}" style="max-height:220px;max-width:100%;object-fit:cover;border-radius:8px">`
+        } catch {
+          imageTag = ''
+        }
+      } else {
+        imageTag = ''
+      }
     }
   }
 
