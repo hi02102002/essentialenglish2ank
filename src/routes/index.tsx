@@ -180,12 +180,19 @@ function HomePage() {
     [cards],
   )
 
+  function getStoredToken(): string | undefined {
+    if (typeof window === 'undefined') return undefined
+    return sessionStorage.getItem('anki_auth_token') || undefined
+  }
+
   async function onAnalyzeUrl() {
     setError('')
     setStatus('Đang phân tích bài học từ URL…')
     setIsAnalyzing(true)
     try {
-      const result = await analyzeLesson({ data: { url } })
+      const result = await analyzeLesson({
+        data: { url, token: getStoredToken() },
+      })
       setLesson(result)
       setAllWords(result.words)
       setChecked(Object.fromEntries(result.words.map((w) => [w, true])))
@@ -197,6 +204,12 @@ function HomePage() {
       setStep(2)
     } catch (err) {
       setStatus('')
+      if (err instanceof Error && err.message.includes('401')) {
+        sessionStorage.removeItem('anki_auth_token')
+        setIsAuthenticated(false)
+        setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
+        return
+      }
       setError(err instanceof Error ? err.message : 'Không thể đọc bài học')
     } finally {
       setIsAnalyzing(false)
@@ -224,7 +237,7 @@ function HomePage() {
     setIsGenerating(true)
     try {
       const generated = await generateVocabulary({
-        data: { words: selectedWords },
+        data: { words: selectedWords, token: getStoredToken() },
       })
       const nextCards = generated.map(
         (item, index): VocabularyCard => ({
@@ -242,6 +255,12 @@ function HomePage() {
       setStep(3)
     } catch (err) {
       setStatus('')
+      if (err instanceof Error && err.message.includes('401')) {
+        sessionStorage.removeItem('anki_auth_token')
+        setIsAuthenticated(false)
+        setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
+        return
+      }
       setError(err instanceof Error ? err.message : 'Không thể tạo thẻ từ vựng')
     } finally {
       setIsGenerating(false)
@@ -274,12 +293,22 @@ function HomePage() {
     setIsExporting(true)
 
     try {
+      const token = getStoredToken()
       const response = await fetch('/api/export', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ deckName, cards: selectedCards }),
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { 'x-access-token': token } : {}),
+        },
+        body: JSON.stringify({ deckName, cards: selectedCards, token }),
       })
       if (!response.ok) {
+        if (response.status === 401) {
+          sessionStorage.removeItem('anki_auth_token')
+          setIsAuthenticated(false)
+          setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
+          return
+        }
         const text = await response.text()
         throw new Error(text || `Xuất thẻ thất bại (${response.status})`)
       }
@@ -297,6 +326,12 @@ function HomePage() {
       setStatus('Xuất file Anki (.apkg) thành công!')
     } catch (err) {
       setStatus('')
+      if (err instanceof Error && err.message.includes('401')) {
+        sessionStorage.removeItem('anki_auth_token')
+        setIsAuthenticated(false)
+        setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
+        return
+      }
       setError(err instanceof Error ? err.message : 'Không thể xuất file Anki')
     } finally {
       setIsExporting(false)

@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { z } from 'zod'
 import { buildApkg } from '@/server/anki'
+import { assertAuthorized } from '@/server/auth'
 
 const cardSchema = z.object({
   id: z.string(),
@@ -20,6 +21,7 @@ const cardSchema = z.object({
 const payloadSchema = z.object({
   deckName: z.string().min(1).max(120),
   cards: z.array(cardSchema).min(1).max(100),
+  token: z.string().optional(),
 })
 
 function filenameFor(deckName: string) {
@@ -36,7 +38,16 @@ export const Route = createFileRoute('/api/export')({
     handlers: {
       POST: async ({ request }) => {
         try {
-          const payload = payloadSchema.parse(await request.json())
+          const authHeader =
+            request.headers.get('x-access-token') ||
+            request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+
+          const json = await request.json()
+          const payload = payloadSchema.parse(json)
+          const token = authHeader || payload.token
+
+          assertAuthorized(token)
+
           const cards = payload.cards.filter((card) => card.selected)
           if (!cards.length) return new Response('No selected cards', { status: 400 })
 
@@ -49,9 +60,11 @@ export const Route = createFileRoute('/api/export')({
             },
           })
         } catch (error) {
+          const message = error instanceof Error ? error.message : 'Export failed'
+          const is401 = message.includes('401')
           return Response.json(
-            { error: error instanceof Error ? error.message : 'Export failed' },
-            { status: 400 },
+            { error: message },
+            { status: is401 ? 401 : 400 },
           )
         }
       },
