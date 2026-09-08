@@ -16,6 +16,16 @@ const vocabCardSchema = z.object({
   vietnamese: z.string(),
   englishDefinition: z.string().optional().default(''),
   example: z.string().optional().default(''),
+  chunks: z
+    .array(
+      z.object({
+        text: z.string(),
+        meaningVi: z.string().optional().default(''),
+        audioUrl: z.string().optional().default(''),
+      }),
+    )
+    .optional()
+    .default([]),
   imageQuery: z.string().optional().default(''),
   imageUrl: z.string().optional().default(''),
   wordAudioUrl: z.string().optional().default(''),

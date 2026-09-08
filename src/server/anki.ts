@@ -268,6 +268,44 @@ body.night_mode,
   color: #475569;
 }
 
+.anki-chunks-box {
+  margin-top: 12px;
+  background: var(--anki-box-bg, #f8fafc);
+  border: 1px solid var(--anki-box-border, #e2e8f0);
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: left;
+}
+
+.anki-chunks-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--anki-muted, #475569);
+  margin-bottom: 6px;
+}
+
+.anki-chunks-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.anki-chunk-text {
+  font-weight: 600;
+  color: #0369a1;
+}
+
+.anki-chunk-meaning {
+  color: var(--anki-muted, #475569);
+}
+
+.anki-chunk-audio {
+  display: inline-block;
+  margin: 0 4px;
+  vertical-align: middle;
+}
+
 /* Explicit Night Mode overrides with !important */
 .nightMode .anki-pos-adj, .night_mode .anki-pos-adj, body.nightMode .anki-pos-adj, body.night_mode .anki-pos-adj {
   background: #78350f !important;
@@ -389,6 +427,42 @@ body.night_mode .anki-badge-note {
   background: #78350f !important;
   color: #fde68a !important;
 }
+
+.nightMode .anki-chunks-box,
+.night_mode .anki-chunks-box,
+body.nightMode .anki-chunks-box,
+body.night_mode .anki-chunks-box {
+  background: #1e293b !important;
+  border-color: #334155 !important;
+}
+
+.nightMode .anki-chunks-title,
+.night_mode .anki-chunks-title,
+body.nightMode .anki-chunks-title,
+body.night_mode .anki-chunks-title {
+  color: #94a3b8 !important;
+}
+
+.nightMode .anki-chunks-list,
+.night_mode .anki-chunks-list,
+body.nightMode .anki-chunks-list,
+body.night_mode .anki-chunks-list {
+  color: #e2e8f0 !important;
+}
+
+.nightMode .anki-chunk-text,
+.night_mode .anki-chunk-text,
+body.nightMode .anki-chunk-text,
+body.night_mode .anki-chunk-text {
+  color: #38bdf8 !important;
+}
+
+.nightMode .anki-chunk-meaning,
+.night_mode .anki-chunk-meaning,
+body.nightMode .anki-chunk-meaning,
+body.night_mode .anki-chunk-meaning {
+  color: #94a3b8 !important;
+}
 `
 
 async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: number) {
@@ -463,6 +537,48 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
     exampleAudioTag = ''
   }
 
+  const chunkAudioTags: string[] = []
+  if (Array.isArray(card.chunks) && card.chunks.length > 0) {
+    for (let cIdx = 0; cIdx < card.chunks.length; cIdx++) {
+      const chunk = card.chunks[cIdx]
+      if (chunk?.text) {
+        try {
+          const chunkTargetAudio = chunk.audioUrl
+            ? chunk.audioUrl.replace(/([?&]type=)1\b/, '$12')
+            : getYoudaoUnsignedVoiceUrl(chunk.text, 2)
+          const audio = await downloadMedia(chunkTargetAudio, 'mp3')
+          const filename = `${base}-chunk-${cIdx + 1}.${audio.extension}`
+          apkg.addMedia(filename, audio.buffer)
+          chunkAudioTags.push(`[sound:${filename}]`)
+        } catch {
+          chunkAudioTags.push('')
+        }
+      } else {
+        chunkAudioTags.push('')
+      }
+    }
+  }
+
+  const chunksHtml =
+    Array.isArray(card.chunks) && card.chunks.length > 0
+      ? `
+      <div class="anki-chunks-box">
+        <div class="anki-chunks-title">🧩 <b>Lexical Chunks (Cụm từ đi kèm):</b></div>
+        <ul class="anki-chunks-list">
+          ${card.chunks
+            .map(
+              (c, idx) =>
+                `<li><span class="anki-chunk-text">${escapeHtml(c.text)}</span>${
+                  chunkAudioTags[idx] ? ` <span class="anki-chunk-audio">${chunkAudioTags[idx]}</span>` : ''
+                }${
+                  c.meaningVi ? ` <span class="anki-chunk-meaning">— ${escapeHtml(c.meaningVi)}</span>` : ''
+                }</li>`,
+            )
+            .join('')}
+        </ul>
+      </div>`
+      : ''
+
   const isPhrase = card.kind === 'phrase' || card.word.includes(' ')
   const posInfo = getPosInfo(card.partOfSpeech || (isPhrase ? 'phrase' : 'noun'))
   const badgeHtml = `<div class="anki-badge ${posInfo.ankiClass}">${escapeHtml(posInfo.labelVi)} • ${escapeHtml(posInfo.abbr)}</div>`
@@ -489,6 +605,7 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
         <div class="anki-en"><b>English:</b> ${escapeHtml(card.englishDefinition)}</div>
         ${card.hint ? `<div class="anki-hint"><b>💡 Textbook Note:</b> <i>${escapeHtml(card.hint)}</i></div>` : ''}
       </div>
+      ${chunksHtml}
       <div class="anki-example-box">
         <div class="anki-example-text"><i>${escapeHtml(card.example)}</i> ${exampleAudioTag}</div>
       </div>

@@ -24,11 +24,15 @@ import {
   CompassIcon,
   InfoIcon,
   ImageIcon,
+  PlusIcon,
+  Trash2Icon,
+  Loader2Icon,
 } from 'lucide-react'
 import {
   analyzeLesson,
   generateVocabulary,
   generateNotes,
+  generateChunks,
   checkAuthRequirement,
   verifyPassword,
   verifySessionToken,
@@ -335,6 +339,7 @@ function HomePage() {
 
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isGeneratingChunks, setIsGeneratingChunks] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
 
   const [status, setStatus] = useState('')
@@ -604,6 +609,123 @@ function HomePage() {
     setStep(2)
   }
 
+  async function onGenerateAiChunks() {
+    const candidateWords = selectedWords.length > 0 ? selectedWords : allWords
+    if (!candidateWords.length) {
+      setError('Vui lòng chọn hoặc có ít nhất 1 từ vựng để tạo chunks.')
+      return
+    }
+
+    setError('')
+    setStatus('Đang dùng AI tạo thêm cụm từ Lexical Chunks tự nhiên…')
+    setIsGeneratingChunks(true)
+
+    try {
+      const token = getStoredToken()
+      const storyText =
+        lesson?.notes?.map((n) => n.content?.join(' ')).filter(Boolean).join('\n') || ''
+      const generated = await generateChunks({
+        data: {
+          words: candidateWords.slice(0, 30),
+          storyText,
+          token,
+        },
+      })
+
+      if (!generated.length) {
+        setStatus('Không tìm thấy chunks mới nào.')
+        return
+      }
+
+      const existingSet = new Set(allPhrases.map((p) => p.toLowerCase()))
+      const newPhrases: string[] = []
+      const newHints: Record<string, string> = { ...phraseHints }
+
+      for (const item of generated) {
+        const lower = item.word.toLowerCase()
+        if (!existingSet.has(lower)) {
+          existingSet.add(lower)
+          newPhrases.push(item.word)
+          if (item.vietnamese) {
+            newHints[item.word] = item.vietnamese
+          }
+        }
+      }
+
+      if (!newPhrases.length) {
+        setStatus('Tất cả các chunks được đề xuất đã có trong danh sách cụm từ.')
+        return
+      }
+
+      setAllPhrases((prev) => [...prev, ...newPhrases])
+      setCheckedPhrases((prev) => {
+        const next = { ...prev }
+        for (const p of newPhrases) next[p] = true
+        return next
+      })
+      setPhraseHints(newHints)
+      setStatus(`Đã tạo và thêm thành công ${newPhrases.length} cụm từ Lexical Chunks vào bài học!`)
+    } catch (err) {
+      setStatus('')
+      if (err instanceof Error && err.message.includes('401')) {
+        sessionStorage.removeItem('anki_auth_token')
+        setIsAuthenticated(false)
+        setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
+      } else {
+        setError(err instanceof Error ? err.message : 'Không thể tạo chunks bằng AI.')
+      }
+    } finally {
+      setIsGeneratingChunks(false)
+    }
+  }
+
+  function onSplitChunksToCards() {
+    const newCards: VocabularyCard[] = []
+    const existingWords = new Set(
+      cards.map((c) => (c.type === 'vocabulary' ? c.word.toLowerCase() : '')),
+    )
+
+    for (const card of cards) {
+      if (card.type !== 'vocabulary' || !Array.isArray(card.chunks)) continue
+
+      for (const chunk of card.chunks) {
+        const trimmed = chunk.text?.trim()
+        if (!trimmed) continue
+        const lower = trimmed.toLowerCase()
+        if (existingWords.has(lower)) continue
+        existingWords.add(lower)
+
+        const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(trimmed, 2)
+        newCards.push({
+          type: 'vocabulary',
+          id: `chunk-${Date.now()}-${newCards.length}`,
+          selected: true,
+          unitNumber: card.unitNumber,
+          kind: 'phrase',
+          partOfSpeech: 'phrase',
+          word: trimmed,
+          ipa: '',
+          vietnamese: chunk.meaningVi || card.vietnamese,
+          englishDefinition: `Common lexical chunk related to "${card.word}".`,
+          example: card.example || '',
+          imageUrl: card.imageUrl,
+          imageQuery: trimmed,
+          wordAudioUrl: chunkAudio,
+          exampleAudioUrl: chunkAudio,
+          sourceUrl: card.sourceUrl,
+        })
+      }
+    }
+
+    if (!newCards.length) {
+      setStatus('Tất cả các chunks đã tồn tại dưới dạng thẻ độc lập hoặc chưa có chunks nào.')
+      return
+    }
+
+    setCards((prev) => [...prev, ...newCards])
+    setStatus(`Đã tách thành công ${newCards.length} thẻ flashcard độc lập từ các Chunks!`)
+  }
+
   async function onGenerateCards() {
     const totalVocabItems = [...selectedWords, ...selectedPhrases]
     if (!totalVocabItems.length && !selectedNotes.length) {
@@ -645,6 +767,16 @@ function HomePage() {
           const customImg = itemImages[item.word]
           const hint = phraseHints[item.word]
 
+          const rawChunks = Array.isArray(item.chunks) ? item.chunks : []
+          const chunks = rawChunks.map((c: any) => {
+            const text = String(c.text || c || '').trim()
+            return {
+              text,
+              meaningVi: String(c.meaningVi || '').trim(),
+              audioUrl: c.audioUrl || getYoudaoDictVoiceUrl(text, 2),
+            }
+          })
+
           return {
             type: 'vocabulary',
             id: `vocab-${Date.now()}-${index}`,
@@ -653,6 +785,7 @@ function HomePage() {
             kind: isPhrase ? 'phrase' : 'word',
             hint,
             ...item,
+            chunks,
             partOfSpeech: item.partOfSpeech || (isPhrase ? 'phrase' : 'noun'),
             imageUrl: customImg || getBingImageUrl(item.imageQuery),
             wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 2),
@@ -714,6 +847,12 @@ function HomePage() {
           }
           if (vPatch.example !== undefined) {
             next.exampleAudioUrl = getYoudaoDictVoiceUrl(vPatch.example, 2)
+          }
+          if (vPatch.chunks !== undefined) {
+            next.chunks = vPatch.chunks.map((c) => ({
+              ...c,
+              audioUrl: c.audioUrl || getYoudaoDictVoiceUrl(c.text, 2),
+            }))
           }
         } else if (next.type === 'note') {
           const nPatch = patch as Partial<NoteCard>
@@ -1352,14 +1491,14 @@ function HomePage() {
           )}
 
           {/* Section 2: Key Phrases & Expressions (Split into Individual Flashcards) */}
-          {allPhrases.length > 0 && (
+          {(allPhrases.length > 0 || allWords.length > 0) && (
             <Card className="border-border/80 bg-card/80 backdrop-blur-md">
               <CardHeader className="pb-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-center gap-2.5">
                     <SparklesIcon className="size-4 text-purple-500" aria-hidden="true" />
                     <CardTitle className="text-base font-bold">
-                      2. Cụm từ &amp; Thành ngữ bài học (Key Phrases &amp; Expressions)
+                      2. Cụm từ &amp; Chunks bài học (Key Phrases &amp; Lexical Chunks)
                     </CardTitle>
                     <Badge
                       variant="outline"
@@ -1369,56 +1508,112 @@ function HomePage() {
                     </Badge>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Button
                       variant="outline"
                       size="xs"
-                      onClick={() =>
-                        setCheckedPhrases(
-                          Object.fromEntries(allPhrases.map((p) => [p, true])),
-                        )
+                      className="border-purple-500/40 text-purple-600 dark:text-purple-300 hover:bg-purple-500/10 gap-1.5"
+                      onClick={onGenerateAiChunks}
+                      disabled={
+                        isGeneratingChunks ||
+                        (allWords.length === 0 && !lesson?.notes?.length)
                       }
                     >
-                      Chọn tất cả ({allPhrases.length})
+                      {isGeneratingChunks ? (
+                        <>
+                          <Loader2Icon className="size-3 animate-spin" />
+                          Đang tạo Chunks...
+                        </>
+                      ) : (
+                        <>
+                          <SparklesIcon className="size-3 text-purple-500" />
+                          Tạo thêm Chunks bằng AI
+                        </>
+                      )}
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() =>
-                        setCheckedPhrases(
-                          Object.fromEntries(allPhrases.map((p) => [p, false])),
-                        )
-                      }
-                    >
-                      Bỏ chọn
-                    </Button>
+                    {allPhrases.length > 0 && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() =>
+                            setCheckedPhrases(
+                              Object.fromEntries(allPhrases.map((p) => [p, true])),
+                            )
+                          }
+                        >
+                          Chọn tất cả ({allPhrases.length})
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          onClick={() =>
+                            setCheckedPhrases(
+                              Object.fromEntries(allPhrases.map((p) => [p, false])),
+                            )
+                          }
+                        >
+                          Bỏ chọn
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </div>
                 <CardDescription className="text-xs">
-                  Mỗi cụm từ/thành ngữ dưới đây sẽ được tạo thành{' '}
+                  Mỗi cụm từ/thành ngữ/chunks dưới đây sẽ được tạo thành{' '}
                   <strong className="text-foreground">1 thẻ từ vựng Anki độc lập</strong>{' '}
                   (có phiên âm, dịch nghĩa tiếng Việt, định nghĩa tiếng Anh, câu ví dụ và âm thanh riêng).
                 </CardDescription>
               </CardHeader>
 
               <CardPanel className="flex flex-col gap-4">
-                {/* Search Filter for Phrases */}
-                <div className="relative">
-                  <Input
-                    type="search"
-                    value={phraseFilter}
-                    onChange={(e) => setPhraseFilter(e.target.value)}
-                    placeholder="Tìm nhanh cụm từ / thành ngữ trong bài..."
-                    className="pl-9 text-xs sm:text-sm"
-                  />
-                  <SearchIcon
-                    className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                </div>
+                {allPhrases.length === 0 ? (
+                  <div className="text-center py-6 px-4 rounded-xl border border-dashed border-border/70 flex flex-col items-center justify-center gap-2">
+                    <p className="text-xs text-muted-foreground max-w-md">
+                      Bài học này chưa có sẵn cụm từ trích xuất từ SGK. Bạn có thể nhấn &quot;Tạo thêm Chunks bằng AI&quot; để AI trích xuất các cụm lexical chunks tự nhiên từ các từ vựng và bài đọc của unit.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-purple-500/40 text-purple-600 dark:text-purple-300 hover:bg-purple-500/10 gap-1.5"
+                      onClick={onGenerateAiChunks}
+                      disabled={
+                        isGeneratingChunks ||
+                        (allWords.length === 0 && !lesson?.notes?.length)
+                      }
+                    >
+                      {isGeneratingChunks ? (
+                        <>
+                          <Loader2Icon className="size-3.5 animate-spin" />
+                          Đang phân tích và tạo Chunks...
+                        </>
+                      ) : (
+                        <>
+                          <SparklesIcon className="size-3.5 text-purple-500" />
+                          Tạo Lexical Chunks bằng AI ngay
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Search Filter for Phrases */}
+                    <div className="relative">
+                      <Input
+                        type="search"
+                        value={phraseFilter}
+                        onChange={(e) => setPhraseFilter(e.target.value)}
+                        placeholder="Tìm nhanh cụm từ / thành ngữ trong bài..."
+                        className="pl-9 text-xs sm:text-sm"
+                      />
+                      <SearchIcon
+                        className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                    </div>
 
-                {/* Phrases Grid / List */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[420px] overflow-y-auto p-1 pr-2 rounded-xl border border-border/40 bg-muted/20">
+                    {/* Phrases Grid / List */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[420px] overflow-y-auto p-1 pr-2 rounded-xl border border-border/40 bg-muted/20">
                   {filteredPhrases.map((phrase) => {
                     const isChecked = checkedPhrases[phrase] !== false
                     const hint = phraseHints[phrase]
@@ -1472,6 +1667,8 @@ function HomePage() {
                     </div>
                   )}
                 </div>
+                  </>
+                )}
               </CardPanel>
             </Card>
           )}
@@ -1746,6 +1943,21 @@ function HomePage() {
                     onClick={() => setCardFilterType('note')}
                   >
                     Ghi chú ({noteCardCount})
+                  </Button>
+                )}
+                {cards.some(
+                  (c) =>
+                    c.type === 'vocabulary' && c.chunks && c.chunks.length > 0,
+                ) && (
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={onSplitChunksToCards}
+                    className="border-purple-500/40 text-purple-600 dark:text-purple-300 hover:bg-purple-500/10 ml-auto gap-1.5"
+                    title="Chuyển tất cả Lexical Chunks trong các thẻ thành các thẻ từ vựng Anki độc lập"
+                  >
+                    <SparklesIcon className="size-3 text-purple-500" />
+                    Tách Chunks thành thẻ riêng
                   </Button>
                 )}
               </div>
@@ -2095,6 +2307,114 @@ function HomePage() {
                             patchCard(realIndex, { example: e.target.value })
                           }
                         />
+                      </div>
+
+                      {/* Lexical Chunks (Cụm từ tự nhiên đi kèm) */}
+                      <div className="flex flex-col gap-2 rounded-xl border border-purple-500/20 bg-purple-500/5 p-3 sm:p-3.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <SparklesIcon className="size-3.5 text-purple-500" aria-hidden="true" />
+                            <span className="text-xs font-bold text-purple-700 dark:text-purple-300">
+                              Lexical Chunks (Cụm từ tự nhiên đi kèm)
+                            </span>
+                            <Badge
+                              variant="secondary"
+                              className="text-[0.65rem] px-1.5 py-0 h-4 bg-purple-500/10 text-purple-600 dark:text-purple-300 font-mono"
+                            >
+                              {(card.chunks || []).length}
+                            </Badge>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className="h-6 text-[0.7rem] text-purple-600 dark:text-purple-400 hover:text-purple-700 hover:bg-purple-500/15 gap-1"
+                            onClick={() => {
+                              const currentChunks = card.chunks || []
+                              patchCard(realIndex, {
+                                chunks: [...currentChunks, { text: '', meaningVi: '' }],
+                              })
+                            }}
+                          >
+                            <PlusIcon className="size-3" aria-hidden="true" />
+                            Thêm chunk
+                          </Button>
+                        </div>
+
+                        {(!card.chunks || card.chunks.length === 0) ? (
+                          <p className="text-[0.75rem] text-muted-foreground italic">
+                            Chưa có chunks nào cho từ này. Nhấn &quot;Thêm chunk&quot; để bổ sung cụm từ đi kèm.
+                          </p>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            {card.chunks.map((chunk, cIdx) => (
+                              <div
+                                key={cIdx}
+                                className="flex items-center gap-2 p-2 rounded-lg bg-background/80 border border-border/60"
+                              >
+                                {chunk.text && (
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="size-7 shrink-0 text-muted-foreground hover:text-primary"
+                                    title="Nghe phát âm chunk (US)"
+                                    onClick={() =>
+                                      playAudio(
+                                        chunk.audioUrl ||
+                                          getYoudaoDictVoiceUrl(chunk.text, 2),
+                                      )
+                                    }
+                                  >
+                                    <Volume2Icon className="size-3.5" aria-hidden="true" />
+                                  </Button>
+                                )}
+                                <div className="flex-1 grid grid-cols-1 sm:grid-cols-[1.2fr_1fr] gap-2">
+                                  <Input
+                                    size="sm"
+                                    placeholder="Cụm từ (e.g. online learning has advantages)"
+                                    value={chunk.text}
+                                    onChange={(e) => {
+                                      const newChunks = [...(card.chunks || [])]
+                                      newChunks[cIdx] = {
+                                        ...newChunks[cIdx],
+                                        text: e.target.value,
+                                      }
+                                      patchCard(realIndex, { chunks: newChunks })
+                                    }}
+                                    className="h-7 text-xs font-mono font-medium"
+                                  />
+                                  <Input
+                                    size="sm"
+                                    placeholder="Nghĩa tiếng Việt"
+                                    value={chunk.meaningVi}
+                                    onChange={(e) => {
+                                      const newChunks = [...(card.chunks || [])]
+                                      newChunks[cIdx] = {
+                                        ...newChunks[cIdx],
+                                        meaningVi: e.target.value,
+                                      }
+                                      patchCard(realIndex, { chunks: newChunks })
+                                    }}
+                                    className="h-7 text-xs"
+                                  />
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                                  title="Xóa chunk"
+                                  onClick={() => {
+                                    const newChunks = (card.chunks || []).filter(
+                                      (_, idx) => idx !== cIdx,
+                                    )
+                                    patchCard(realIndex, { chunks: newChunks })
+                                  }}
+                                >
+                                  <Trash2Icon className="size-3.5" aria-hidden="true" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

@@ -4,6 +4,19 @@ import { z } from 'zod'
 import type { GeneratedNote, GeneratedVocabulary } from '@/lib/types'
 import { normalizePartOfSpeech } from '@/lib/pos'
 
+export const LexicalChunkSchema = z.object({
+  text: z
+    .string()
+    .describe(
+      'Natural high-frequency English lexical chunk, collocation or fixed expression, e.g. "take advantage of", "feel exhausted"',
+    ),
+  meaningVi: z
+    .string()
+    .describe('Concise Vietnamese meaning of this chunk, e.g. "tận dụng", "cảm thấy kiệt sức"'),
+})
+
+export type LexicalChunk = z.infer<typeof LexicalChunkSchema>
+
 export const FlashcardSchema = z.object({
   word: z.string().describe('The English vocabulary word or phrase'),
   ipa: z
@@ -19,6 +32,11 @@ export const FlashcardSchema = z.object({
     .string()
     .describe(
       'Part of speech in English: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction',
+    ),
+  chunks: z
+    .array(LexicalChunkSchema)
+    .describe(
+      '2 to 4 high-frequency lexical chunks or collocations using this word with Vietnamese meaning',
     ),
 })
 
@@ -105,6 +123,15 @@ async function enrichVocabularyBatch(
     const defaultPos = word.includes(' ') ? 'phrase' : 'noun'
     const partOfSpeech = normalizePartOfSpeech(rawPos) || defaultPos
 
+    const rawChunks = Array.isArray(item?.chunks) ? item.chunks : []
+    const chunks = rawChunks
+      .filter((c: any) => c && (typeof c === 'string' ? c.trim() : c.text?.trim()))
+      .map((c: any) =>
+        typeof c === 'string'
+          ? { text: c.trim(), meaningVi: '' }
+          : { text: String(c.text || '').trim(), meaningVi: String(c.meaningVi || '').trim() },
+      )
+
     return {
       word,
       ipa: String(item?.ipa || '').trim(),
@@ -113,6 +140,7 @@ async function enrichVocabularyBatch(
       example: String(item?.example || '').trim(),
       imageQuery: String(item?.imageQuery || item?.word || origWord || '').trim(),
       partOfSpeech,
+      chunks,
     }
   })
 }
@@ -135,7 +163,7 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
   })
 
   const systemPrompt =
-    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should strictly be standard General American (US) English IPA transcription (e.g. rhotic /r/, American vowel conventions like /æ/, /ɑː/, /oʊ/, flap /t/ where common, e.g. /ˈwɑːtər/). Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks. For each word or phrase, accurately classify its part of speech (partOfSpeech: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction).\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should strictly be standard General American (US) English IPA transcription (e.g. rhotic /r/, American vowel conventions like /æ/, /ɑː/, /oʊ/, flap /t/ where common, e.g. /ˈwɑːtər/). Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks. For each word or phrase, accurately classify its part of speech (partOfSpeech: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction). For each word or phrase, provide 2 to 4 high-frequency lexical chunks or collocations (chunks: [{"text": string, "meaningVi": string}]) showing how native speakers naturally use this item in phrases (e.g. for "advantage": [{"text": "take advantage of", "meaningVi": "tận dụng"}, {"text": "have an advantage", "meaningVi": "có lợi thế"}]).\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string, "chunks": [{"text": string, "meaningVi": string}]}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
 
   const BATCH_SIZE = 12
   const batches: string[][] = []
@@ -231,5 +259,90 @@ export async function enrichNotes(
       example: String(generated?.example || orig.content[0] || '').trim(),
     }
   })
+}
+
+export const StandaloneChunkSchema = z.object({
+  word: z
+    .string()
+    .describe('The lexical chunk or expression, e.g. "take advantage of", "breathe in and out"'),
+  ipa: z.string().describe('Standard General American (US) IPA pronunciation'),
+  vietnamese: z.string().describe('Vietnamese translation or meaning'),
+  englishDefinition: z.string().describe('Concise English definition'),
+  example: z.string().describe('Natural example sentence using this chunk in American English'),
+  imageQuery: z.string().describe('Safe, concrete visual search query'),
+  partOfSpeech: z.string().describe('Part of speech, e.g. "phrase", "phrasal verb", or "idiom"'),
+})
+
+export const StandaloneChunksOutputSchema = z.object({
+  cards: z.array(StandaloneChunkSchema).describe('List of extracted/generated lexical chunk flashcards'),
+})
+
+export async function generateLessonChunks(
+  words: string[],
+  storyText?: string,
+): Promise<GeneratedVocabulary[]> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
+  }
+
+  const baseURL =
+    process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
+  const model = process.env.OPENAI_MODEL || 'gpt-5-6'
+
+  const adapter = openaiCompatibleText(model, {
+    baseURL,
+    apiKey,
+  })
+
+  const systemPrompt =
+    'You are an expert English teacher specialized in Lexical Chunking methodology. From the provided vocabulary list and optional context, generate 6 to 12 high-yield, natural Lexical Chunks (collocations, phrasal verbs, common conversational phrases, or fixed expressions). Each chunk must be a natural multi-word unit that native speakers use as a single piece (e.g. "take advantage of something", "breathe in and out", "online learning has advantages", "make a quick decision", "at the end of the day"). For each chunk, provide: word (the chunk string), accurate General American US IPA, Vietnamese meaning, concise English definition, natural example sentence in US English, safe concrete imageQuery, and partOfSpeech (e.g. "phrase", "phrasal verb", or "idiom").\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+
+  const userPrompt = `Generate lexical chunks based on this vocabulary and context:
+Vocabulary words:
+${words.slice(0, 40).join(', ')}
+
+${storyText ? `Context/Reading text:\n${storyText.slice(0, 1500)}` : ''}`
+
+  let rawCards: z.infer<typeof StandaloneChunkSchema>[] = []
+
+  try {
+    const res = await chat({
+      adapter,
+      systemPrompts: [systemPrompt],
+      messages: [{ role: 'user', content: userPrompt }],
+      outputSchema: StandaloneChunksOutputSchema,
+    })
+    rawCards = res.cards || []
+  } catch (err: any) {
+    try {
+      const textOutput = await chat({
+        adapter,
+        systemPrompts: [systemPrompt],
+        messages: [{ role: 'user', content: userPrompt }],
+        stream: false,
+      })
+      const cleaned = extractJson(textOutput)
+      const parsed = JSON.parse(cleaned)
+      const validated = StandaloneChunksOutputSchema.parse(
+        Array.isArray(parsed) ? { cards: parsed } : parsed,
+      )
+      rawCards = validated.cards
+    } catch (fallbackErr: any) {
+      throw new Error(
+        `Failed to generate chunks using TanStack AI: ${err?.message || fallbackErr?.message || err}`,
+      )
+    }
+  }
+
+  return rawCards.map((item) => ({
+    word: String(item.word || '').trim(),
+    ipa: String(item.ipa || '').trim(),
+    vietnamese: String(item.vietnamese || '').trim(),
+    englishDefinition: String(item.englishDefinition || '').trim(),
+    example: String(item.example || '').trim(),
+    imageQuery: String(item.imageQuery || item.word || '').trim(),
+    partOfSpeech: normalizePartOfSpeech(item.partOfSpeech) || 'phrase',
+  }))
 }
 

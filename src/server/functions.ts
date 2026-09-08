@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
 import { analyzeLessonUrl } from './lesson'
-import { enrichVocabulary, enrichNotes } from './ai'
+import { enrichVocabulary, enrichNotes, generateLessonChunks } from './ai'
 import { assertAuthorized, isAuthorized } from './auth'
 
 export const checkAuthRequirement = createServerFn({ method: 'GET' }).handler(
@@ -92,4 +92,18 @@ export const generateNotes = createServerFn({ method: 'POST' })
     assertAuthorized(data.token)
     return enrichNotes(data.notes)
   })
+
+export const generateChunks = createServerFn({ method: 'POST' })
+  .validator(
+    z.object({
+      words: z.array(z.string().min(1).max(120)).min(1).max(100),
+      storyText: z.string().optional(),
+      token: z.string().optional(),
+    }),
+  )
+  .handler(({ data }) => {
+    assertAuthorized(data.token)
+    return generateLessonChunks(data.words, data.storyText)
+  })
+
 

@@ -37,6 +37,12 @@ export type LessonAnalysis = {
   notes: ExtractedNote[]
 }
 
+export type LexicalChunk = {
+  text: string
+  meaningVi: string
+  audioUrl?: string
+}
+
 export type VocabularyCard = {
   type: 'vocabulary'
   id: string
@@ -50,6 +56,7 @@ export type VocabularyCard = {
   vietnamese: string
   englishDefinition: string
   example: string
+  chunks?: LexicalChunk[]
   imageQuery: string
   imageUrl: string
   wordAudioUrl: string
@@ -77,6 +84,7 @@ export type GeneratedVocabulary = Pick<
   'word' | 'ipa' | 'vietnamese' | 'englishDefinition' | 'example' | 'imageQuery'
 > & {
   partOfSpeech?: string
+  chunks?: LexicalChunk[]
 }
 
 export type GeneratedNote = {
