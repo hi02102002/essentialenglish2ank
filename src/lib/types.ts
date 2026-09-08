@@ -39,8 +39,15 @@ export type LessonAnalysis = {
 
 export type LexicalChunk = {
   text: string
+  ipa?: string
   meaningVi: string
+  englishDefinition?: string
+  example?: string
+  imageQuery?: string
+  imageUrl?: string
+  partOfSpeech?: string
   audioUrl?: string
+  exampleAudioUrl?: string
 }
 
 export type VocabularyCard = {

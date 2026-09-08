@@ -20,8 +20,15 @@ const vocabCardSchema = z.object({
     .array(
       z.object({
         text: z.string(),
+        ipa: z.string().optional().default(''),
         meaningVi: z.string().optional().default(''),
+        englishDefinition: z.string().optional().default(''),
+        example: z.string().optional().default(''),
+        imageQuery: z.string().optional().default(''),
+        imageUrl: z.string().optional().default(''),
+        partOfSpeech: z.string().optional().default('phrase'),
         audioUrl: z.string().optional().default(''),
+        exampleAudioUrl: z.string().optional().default(''),
       }),
     )
     .optional()

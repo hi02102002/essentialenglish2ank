@@ -10,9 +10,26 @@ export const LexicalChunkSchema = z.object({
     .describe(
       'Natural high-frequency English lexical chunk, collocation or fixed expression, e.g. "take advantage of", "feel exhausted"',
     ),
+  ipa: z
+    .string()
+    .describe(
+      'Standard General American (US) English IPA pronunciation for this chunk enclosed in slashes, e.g. /ˈteɪk ədˈvæn.tɪdʒ əv/',
+    ),
   meaningVi: z
     .string()
     .describe('Concise Vietnamese meaning of this chunk, e.g. "tận dụng", "cảm thấy kiệt sức"'),
+  englishDefinition: z
+    .string()
+    .describe('Concise English definition or explanation of how the chunk is used'),
+  example: z
+    .string()
+    .describe('A natural example sentence using this specific chunk in General American English'),
+  imageQuery: z
+    .string()
+    .describe('Safe, concrete visual search query without quotes illustrating this chunk'),
+  partOfSpeech: z
+    .string()
+    .describe('Part of speech: phrase, phrasal verb, or idiom'),
 })
 
 export type LexicalChunk = z.infer<typeof LexicalChunkSchema>
@@ -36,7 +53,7 @@ export const FlashcardSchema = z.object({
   chunks: z
     .array(LexicalChunkSchema)
     .describe(
-      '2 to 4 high-frequency lexical chunks or collocations using this word with Vietnamese meaning',
+      '1 to 2 high-frequency lexical chunks or collocations using this word, each with its own US IPA, Vietnamese meaning, English definition, and example sentence',
     ),
 })
 
@@ -126,11 +143,30 @@ async function enrichVocabularyBatch(
     const rawChunks = Array.isArray(item?.chunks) ? item.chunks : []
     const chunks = rawChunks
       .filter((c: any) => c && (typeof c === 'string' ? c.trim() : c.text?.trim()))
-      .map((c: any) =>
-        typeof c === 'string'
-          ? { text: c.trim(), meaningVi: '' }
-          : { text: String(c.text || '').trim(), meaningVi: String(c.meaningVi || '').trim() },
-      )
+      .map((c: any) => {
+        if (typeof c === 'string') {
+          return {
+            text: c.trim(),
+            ipa: '',
+            meaningVi: '',
+            englishDefinition: '',
+            example: '',
+            imageQuery: c.trim(),
+            partOfSpeech: 'phrase',
+          }
+        }
+        const text = String(c.text || '').trim()
+        const rawPos = c.partOfSpeech ? String(c.partOfSpeech).trim() : 'phrase'
+        return {
+          text,
+          ipa: String(c.ipa || '').trim(),
+          meaningVi: String(c.meaningVi || '').trim(),
+          englishDefinition: String(c.englishDefinition || '').trim(),
+          example: String(c.example || '').trim(),
+          imageQuery: String(c.imageQuery || text).trim(),
+          partOfSpeech: normalizePartOfSpeech(rawPos) || 'phrase',
+        }
+      })
 
     return {
       word,
@@ -163,9 +199,9 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
   })
 
   const systemPrompt =
-    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should strictly be standard General American (US) English IPA transcription (e.g. rhotic /r/, American vowel conventions like /æ/, /ɑː/, /oʊ/, flap /t/ where common, e.g. /ˈwɑːtər/). Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks. For each word or phrase, accurately classify its part of speech (partOfSpeech: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction). For each word or phrase, provide 2 to 4 high-frequency lexical chunks or collocations (chunks: [{"text": string, "meaningVi": string}]) showing how native speakers naturally use this item in phrases (e.g. for "advantage": [{"text": "take advantage of", "meaningVi": "tận dụng"}, {"text": "have an advantage", "meaningVi": "có lợi thế"}]).\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string, "chunks": [{"text": string, "meaningVi": string}]}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should strictly be standard General American (US) English IPA transcription (e.g. rhotic /r/, American vowel conventions like /æ/, /ɑː/, /oʊ/, flap /t/ where common, e.g. /ˈwɑːtər/). Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks. For each word or phrase, accurately classify its part of speech (partOfSpeech: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction). For each word or phrase, provide 1 to 2 high-frequency lexical chunks or collocations (chunks: [{"text": string, "ipa": string, "meaningVi": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]) showing how native speakers naturally use this word in full phrases (e.g. for "advantage": [{"text": "take advantage of", "ipa": "/teɪk ədˈvæn.tɪdʒ əv/", "meaningVi": "tận dụng, lợi dụng", "englishDefinition": "to make good use of an opportunity", "example": "She took advantage of the sunny day to wash her clothes.", "imageQuery": "person hanging laundry sunny day", "partOfSpeech": "phrase"}]). Each chunk MUST have its own accurate General American US IPA, Vietnamese translation, concise English definition, a natural example sentence demonstrating that chunk, and a safe concrete visual imageQuery.\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string, "chunks": [{"text": string, "ipa": string, "meaningVi": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
 
-  const BATCH_SIZE = 12
+  const BATCH_SIZE = 6
   const batches: string[][] = []
   for (let i = 0; i < words.length; i += BATCH_SIZE) {
     batches.push(words.slice(i, i + BATCH_SIZE))

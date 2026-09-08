@@ -45,6 +45,7 @@ import type {
   AnyAnkiCard,
   ExtractedNote,
   LessonAnalysis,
+  LexicalChunk,
   NoteCard,
   VocabularyCard,
 } from '@/lib/types'
@@ -696,23 +697,33 @@ function HomePage() {
         existingWords.add(lower)
 
         const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(trimmed, 2)
+        const exampleText = chunk.example || card.example || ''
+        const chunkExampleAudio =
+          chunk.exampleAudioUrl ||
+          (exampleText ? getYoudaoDictVoiceUrl(exampleText, 2) : '')
+        const chunkQuery = chunk.imageQuery || trimmed
+        const chunkImg = chunk.imageUrl || getBingImageUrl(chunkQuery)
+
         newCards.push({
           type: 'vocabulary',
           id: `chunk-${Date.now()}-${newCards.length}`,
           selected: true,
           unitNumber: card.unitNumber,
           kind: 'phrase',
-          partOfSpeech: 'phrase',
+          partOfSpeech: normalizePartOfSpeech(chunk.partOfSpeech) || 'phrase',
           word: trimmed,
-          ipa: '',
+          ipa: chunk.ipa || '',
           vietnamese: chunk.meaningVi || card.vietnamese,
-          englishDefinition: `Common lexical chunk related to "${card.word}".`,
-          example: card.example || '',
-          imageUrl: card.imageUrl,
-          imageQuery: trimmed,
+          englishDefinition:
+            chunk.englishDefinition ||
+            `Common lexical chunk related to "${card.word}".`,
+          example: exampleText,
+          imageUrl: chunkImg,
+          imageQuery: chunkQuery,
           wordAudioUrl: chunkAudio,
-          exampleAudioUrl: chunkAudio,
+          exampleAudioUrl: chunkExampleAudio,
           sourceUrl: card.sourceUrl,
+          hint: `Lexical Chunk đi liền với "${card.word}"`,
         })
       }
     }
@@ -761,39 +772,94 @@ function HomePage() {
 
       const [generatedVocab, generatedNotes] = await Promise.all(promises)
 
-      const vocabCards: VocabularyCard[] = generatedVocab.map(
-        (item: any, index: number): VocabularyCard => {
-          const isPhrase = phraseSet.has(item.word) || item.word.includes(' ')
-          const customImg = itemImages[item.word]
-          const hint = phraseHints[item.word]
+      const vocabCards: VocabularyCard[] = []
+      const createdWordSet = new Set<string>()
 
-          const rawChunks = Array.isArray(item.chunks) ? item.chunks : []
-          const chunks = rawChunks.map((c: any) => {
-            const text = String(c.text || c || '').trim()
-            return {
-              text,
-              meaningVi: String(c.meaningVi || '').trim(),
-              audioUrl: c.audioUrl || getYoudaoDictVoiceUrl(text, 2),
-            }
-          })
+      for (const [index, item] of (generatedVocab as any[]).entries()) {
+        const isPhrase = phraseSet.has(item.word) || item.word.includes(' ')
+        const customImg = itemImages[item.word]
+        const hint = phraseHints[item.word]
 
+        const rawChunks = Array.isArray(item.chunks) ? item.chunks : []
+        const chunks: LexicalChunk[] = rawChunks.map((c: any) => {
+          const text = String(c.text || c || '').trim()
+          const exampleText = String(c.example || '').trim()
+          const chunkQuery = String(c.imageQuery || text).trim()
           return {
+            text,
+            ipa: String(c.ipa || '').trim(),
+            meaningVi: String(c.meaningVi || '').trim(),
+            englishDefinition: String(c.englishDefinition || '').trim(),
+            example: exampleText,
+            imageQuery: chunkQuery,
+            imageUrl: c.imageUrl || (chunkQuery ? getBingImageUrl(chunkQuery) : ''),
+            partOfSpeech: normalizePartOfSpeech(c.partOfSpeech) || 'phrase',
+            audioUrl: c.audioUrl || (text ? getYoudaoDictVoiceUrl(text, 2) : ''),
+            exampleAudioUrl:
+              c.exampleAudioUrl ||
+              (exampleText ? getYoudaoDictVoiceUrl(exampleText, 2) : ''),
+          }
+        })
+
+        const mainWordLower = item.word.toLowerCase()
+        createdWordSet.add(mainWordLower)
+
+        // 1. Thẻ từ vựng / cụm từ chính
+        vocabCards.push({
+          type: 'vocabulary',
+          id: `vocab-${Date.now()}-${index}`,
+          selected: true,
+          unitNumber: lesson?.unitNumber,
+          kind: isPhrase ? 'phrase' : 'word',
+          hint,
+          ...item,
+          chunks,
+          partOfSpeech: item.partOfSpeech || (isPhrase ? 'phrase' : 'noun'),
+          imageUrl: customImg || getBingImageUrl(item.imageQuery),
+          wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 2),
+          exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 2),
+          sourceUrl: lesson?.sourceUrl ?? 'custom-input',
+        })
+
+        // 2. Tách Chunks thành các thẻ độc lập hoàn chỉnh: IPA, nghĩa, ví dụ, audio US, ảnh minh họa
+        for (const [cIdx, chunk] of chunks.entries()) {
+          const chunkText = chunk.text?.trim()
+          if (!chunkText) continue
+          const chunkLower = chunkText.toLowerCase()
+          if (createdWordSet.has(chunkLower)) continue
+          createdWordSet.add(chunkLower)
+
+          const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(chunkText, 2)
+          const exampleText = chunk.example || item.example || ''
+          const chunkExampleAudio =
+            chunk.exampleAudioUrl ||
+            (exampleText ? getYoudaoDictVoiceUrl(exampleText, 2) : '')
+          const chunkQuery = chunk.imageQuery || chunkText
+          const chunkImg = chunk.imageUrl || getBingImageUrl(chunkQuery)
+
+          vocabCards.push({
             type: 'vocabulary',
-            id: `vocab-${Date.now()}-${index}`,
+            id: `vocab-chunk-${Date.now()}-${index}-${cIdx}`,
             selected: true,
             unitNumber: lesson?.unitNumber,
-            kind: isPhrase ? 'phrase' : 'word',
-            hint,
-            ...item,
-            chunks,
-            partOfSpeech: item.partOfSpeech || (isPhrase ? 'phrase' : 'noun'),
-            imageUrl: customImg || getBingImageUrl(item.imageQuery),
-            wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 2),
-            exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 2),
+            kind: 'phrase',
+            partOfSpeech: chunk.partOfSpeech || 'phrase',
+            word: chunkText,
+            ipa: chunk.ipa || '',
+            vietnamese: chunk.meaningVi || item.vietnamese,
+            englishDefinition:
+              chunk.englishDefinition ||
+              `Common lexical chunk related to "${item.word}".`,
+            example: exampleText,
+            imageQuery: chunkQuery,
+            imageUrl: chunkImg,
+            wordAudioUrl: chunkAudio,
+            exampleAudioUrl: chunkExampleAudio,
             sourceUrl: lesson?.sourceUrl ?? 'custom-input',
-          }
-        },
-      )
+            hint: `Lexical Chunk đi liền với "${item.word}"`,
+          })
+        }
+      }
 
       const noteCards: NoteCard[] = generatedNotes.map(
         (item: any, index: number): NoteCard => ({
@@ -812,8 +878,10 @@ function HomePage() {
 
       const nextCards: AnyAnkiCard[] = [...vocabCards, ...noteCards]
       setCards(nextCards)
+      const wordCount = vocabCards.filter((c) => c.kind === 'word').length
+      const chunkCount = vocabCards.filter((c) => c.kind === 'phrase').length
       setStatus(
-        `Đã tạo thành công ${nextCards.length} thẻ (${selectedWords.length} từ vựng, ${selectedPhrases.length} cụm từ, ${noteCards.length} ghi chú).`,
+        `Đã tạo thành công ${nextCards.length} thẻ (${wordCount} từ vựng, ${chunkCount} cụm từ/chunks kèm ảnh & âm thanh US, ${noteCards.length} ghi chú).`,
       )
       setStep(3)
     } catch (err) {
@@ -2349,68 +2417,119 @@ function HomePage() {
                             {card.chunks.map((chunk, cIdx) => (
                               <div
                                 key={cIdx}
-                                className="flex items-center gap-2 p-2 rounded-lg bg-background/80 border border-border/60"
+                                className="flex flex-col gap-2 p-2.5 rounded-lg bg-background/80 border border-border/60"
                               >
-                                {chunk.text && (
+                                <div className="flex items-center gap-2">
+                                  {chunk.text && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-7 shrink-0 text-muted-foreground hover:text-primary"
+                                      title="Nghe phát âm chunk (US)"
+                                      onClick={() =>
+                                        playAudio(
+                                          chunk.audioUrl ||
+                                            getYoudaoDictVoiceUrl(chunk.text, 2),
+                                        )
+                                      }
+                                    >
+                                      <Volume2Icon className="size-3.5" aria-hidden="true" />
+                                    </Button>
+                                  )}
+                                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-[1.3fr_110px_1fr] gap-2">
+                                    <Input
+                                      size="sm"
+                                      placeholder="Cụm từ (e.g. take advantage of)"
+                                      value={chunk.text}
+                                      onChange={(e) => {
+                                        const newChunks = [...(card.chunks || [])]
+                                        newChunks[cIdx] = {
+                                          ...newChunks[cIdx],
+                                          text: e.target.value,
+                                        }
+                                        patchCard(realIndex, { chunks: newChunks })
+                                      }}
+                                      className="h-7 text-xs font-mono font-medium"
+                                    />
+                                    <Input
+                                      size="sm"
+                                      placeholder="IPA (US)"
+                                      value={chunk.ipa || ''}
+                                      onChange={(e) => {
+                                        const newChunks = [...(card.chunks || [])]
+                                        newChunks[cIdx] = {
+                                          ...newChunks[cIdx],
+                                          ipa: e.target.value,
+                                        }
+                                        patchCard(realIndex, { chunks: newChunks })
+                                      }}
+                                      className="h-7 text-xs font-mono"
+                                    />
+                                    <Input
+                                      size="sm"
+                                      placeholder="Nghĩa tiếng Việt"
+                                      value={chunk.meaningVi}
+                                      onChange={(e) => {
+                                        const newChunks = [...(card.chunks || [])]
+                                        newChunks[cIdx] = {
+                                          ...newChunks[cIdx],
+                                          meaningVi: e.target.value,
+                                        }
+                                        patchCard(realIndex, { chunks: newChunks })
+                                      }}
+                                      className="h-7 text-xs"
+                                    />
+                                  </div>
                                   <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="size-7 shrink-0 text-muted-foreground hover:text-primary"
-                                    title="Nghe phát âm chunk (US)"
-                                    onClick={() =>
-                                      playAudio(
-                                        chunk.audioUrl ||
-                                          getYoudaoDictVoiceUrl(chunk.text, 2),
+                                    className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
+                                    title="Xóa chunk"
+                                    onClick={() => {
+                                      const newChunks = (card.chunks || []).filter(
+                                        (_, idx) => idx !== cIdx,
                                       )
-                                    }
+                                      patchCard(realIndex, { chunks: newChunks })
+                                    }}
                                   >
-                                    <Volume2Icon className="size-3.5" aria-hidden="true" />
+                                    <Trash2Icon className="size-3.5" aria-hidden="true" />
                                   </Button>
-                                )}
-                                <div className="flex-1 grid grid-cols-1 sm:grid-cols-[1.2fr_1fr] gap-2">
-                                  <Input
-                                    size="sm"
-                                    placeholder="Cụm từ (e.g. online learning has advantages)"
-                                    value={chunk.text}
-                                    onChange={(e) => {
-                                      const newChunks = [...(card.chunks || [])]
-                                      newChunks[cIdx] = {
-                                        ...newChunks[cIdx],
-                                        text: e.target.value,
-                                      }
-                                      patchCard(realIndex, { chunks: newChunks })
-                                    }}
-                                    className="h-7 text-xs font-mono font-medium"
-                                  />
-                                  <Input
-                                    size="sm"
-                                    placeholder="Nghĩa tiếng Việt"
-                                    value={chunk.meaningVi}
-                                    onChange={(e) => {
-                                      const newChunks = [...(card.chunks || [])]
-                                      newChunks[cIdx] = {
-                                        ...newChunks[cIdx],
-                                        meaningVi: e.target.value,
-                                      }
-                                      patchCard(realIndex, { chunks: newChunks })
-                                    }}
-                                    className="h-7 text-xs"
-                                  />
                                 </div>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-7 shrink-0 text-muted-foreground hover:text-destructive"
-                                  title="Xóa chunk"
-                                  onClick={() => {
-                                    const newChunks = (card.chunks || []).filter(
-                                      (_, idx) => idx !== cIdx,
-                                    )
-                                    patchCard(realIndex, { chunks: newChunks })
-                                  }}
-                                >
-                                  <Trash2Icon className="size-3.5" aria-hidden="true" />
-                                </Button>
+
+                                <div className="flex items-center gap-2 pl-9">
+                                  <div className="flex-1">
+                                    <Input
+                                      size="sm"
+                                      placeholder="Câu ví dụ cho cụm từ này..."
+                                      value={chunk.example || ''}
+                                      onChange={(e) => {
+                                        const newChunks = [...(card.chunks || [])]
+                                        newChunks[cIdx] = {
+                                          ...newChunks[cIdx],
+                                          example: e.target.value,
+                                        }
+                                        patchCard(realIndex, { chunks: newChunks })
+                                      }}
+                                      className="h-7 text-xs italic"
+                                    />
+                                  </div>
+                                  {chunk.example && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="size-7 shrink-0 text-muted-foreground hover:text-primary"
+                                      title="Nghe câu ví dụ của chunk (US)"
+                                      onClick={() =>
+                                        playAudio(
+                                          chunk.exampleAudioUrl ||
+                                            getYoudaoDictVoiceUrl(chunk.example!, 2),
+                                        )
+                                      }
+                                    >
+                                      <Volume2Icon className="size-3.5" aria-hidden="true" />
+                                    </Button>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>
