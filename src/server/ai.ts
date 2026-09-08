@@ -2,6 +2,7 @@ import { chat } from '@tanstack/ai'
 import { openaiCompatibleText } from '@tanstack/ai-openai/compatible'
 import { z } from 'zod'
 import type { GeneratedNote, GeneratedVocabulary } from '@/lib/types'
+import { normalizePartOfSpeech } from '@/lib/pos'
 
 export const FlashcardSchema = z.object({
   word: z.string().describe('The English vocabulary word or phrase'),
@@ -10,6 +11,11 @@ export const FlashcardSchema = z.object({
   englishDefinition: z.string().describe('Original concise English definition, do not copy textbook wording'),
   example: z.string().describe('Natural example sentence illustrating usage'),
   imageQuery: z.string().describe('Safe, concrete visual search query without quotes'),
+  partOfSpeech: z
+    .string()
+    .describe(
+      'Part of speech in English: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction',
+    ),
 })
 
 export const FlashcardsOutputSchema = z.object({
@@ -90,13 +96,19 @@ async function enrichVocabularyBatch(
 
   return words.map((origWord, index) => {
     const item = rawCards[index]
+    const word = String(item?.word || origWord || '').trim()
+    const rawPos = item?.partOfSpeech ? String(item.partOfSpeech).trim() : ''
+    const defaultPos = word.includes(' ') ? 'phrase' : 'noun'
+    const partOfSpeech = normalizePartOfSpeech(rawPos) || defaultPos
+
     return {
-      word: String(item?.word || origWord || '').trim(),
+      word,
       ipa: String(item?.ipa || '').trim(),
       vietnamese: String(item?.vietnamese || '').trim(),
       englishDefinition: String(item?.englishDefinition || '').trim(),
       example: String(item?.example || '').trim(),
       imageQuery: String(item?.imageQuery || item?.word || origWord || '').trim(),
+      partOfSpeech,
     }
   })
 }
@@ -119,7 +131,7 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
   })
 
   const systemPrompt =
-    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should be standard learner-friendly English IPA. Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks.\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should be standard learner-friendly English IPA. Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks. For each word or phrase, accurately classify its part of speech (partOfSpeech: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction).\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
 
   const BATCH_SIZE = 12
   const batches: string[][] = []

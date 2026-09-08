@@ -36,6 +36,7 @@ import {
 import { PRESET_BOOKS } from '@/server/lesson'
 import { getBingImageUrl } from '@/lib/bing-image'
 import { getYoudaoDictVoiceUrl } from '@/lib/youdao'
+import { getPosInfo, QUICK_POS_OPTIONS, normalizePartOfSpeech } from '@/lib/pos'
 import type {
   AnyAnkiCard,
   ExtractedNote,
@@ -330,9 +331,7 @@ function HomePage() {
 
   // Generated Cards State
   const [cards, setCards] = useState<AnyAnkiCard[]>([])
-  const [cardFilterType, setCardFilterType] = useState<
-    'all' | 'word' | 'phrase' | 'note'
-  >('all')
+  const [cardFilterType, setCardFilterType] = useState<string>('all')
 
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -453,13 +452,59 @@ function HomePage() {
     [cards],
   )
 
+  const adjCount = useMemo(
+    () =>
+      cards.filter(
+        (c) =>
+          c.type === 'vocabulary' &&
+          normalizePartOfSpeech(c.partOfSpeech) === 'adjective',
+      ).length,
+    [cards],
+  )
+
+  const advCount = useMemo(
+    () =>
+      cards.filter(
+        (c) =>
+          c.type === 'vocabulary' &&
+          normalizePartOfSpeech(c.partOfSpeech) === 'adverb',
+      ).length,
+    [cards],
+  )
+
+  const nounCount = useMemo(
+    () =>
+      cards.filter(
+        (c) =>
+          c.type === 'vocabulary' &&
+          normalizePartOfSpeech(c.partOfSpeech) === 'noun',
+      ).length,
+    [cards],
+  )
+
+  const verbCount = useMemo(
+    () =>
+      cards.filter(
+        (c) =>
+          c.type === 'vocabulary' &&
+          normalizePartOfSpeech(c.partOfSpeech) === 'verb',
+      ).length,
+    [cards],
+  )
+
   const displayedCards = useMemo(() => {
     if (cardFilterType === 'all') return cards
     if (cardFilterType === 'word')
       return cards.filter((c) => c.type === 'vocabulary' && c.kind !== 'phrase')
     if (cardFilterType === 'phrase')
       return cards.filter((c) => c.type === 'vocabulary' && c.kind === 'phrase')
-    return cards.filter((c) => c.type === 'note')
+    if (cardFilterType === 'note')
+      return cards.filter((c) => c.type === 'note')
+    return cards.filter(
+      (c) =>
+        c.type === 'vocabulary' &&
+        normalizePartOfSpeech(c.partOfSpeech) === cardFilterType,
+    )
   }, [cards, cardFilterType])
 
   function getStoredToken(): string | undefined {
@@ -608,6 +653,7 @@ function HomePage() {
             kind: isPhrase ? 'phrase' : 'word',
             hint,
             ...item,
+            partOfSpeech: item.partOfSpeech || (isPhrase ? 'phrase' : 'noun'),
             imageUrl: customImg || getBingImageUrl(item.imageQuery),
             wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 1),
             exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 1),
@@ -1613,7 +1659,7 @@ function HomePage() {
                 />
               </div>
 
-              {/* Card Type Filter Buttons */}
+              {/* Card Type & POS Filter Buttons */}
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 <span className="text-xs font-semibold text-muted-foreground">Lọc hiển thị:</span>
                 <Button
@@ -1623,18 +1669,72 @@ function HomePage() {
                 >
                   Tất cả ({cards.length})
                 </Button>
-                <Button
-                  variant={cardFilterType === 'word' ? 'default' : 'outline'}
-                  size="xs"
-                  onClick={() => setCardFilterType('word')}
-                >
-                  Từ vựng ({wordCardCount})
-                </Button>
+                {adjCount > 0 && (
+                  <Button
+                    variant={cardFilterType === 'adjective' ? 'default' : 'outline'}
+                    size="xs"
+                    onClick={() => setCardFilterType('adjective')}
+                    className={
+                      cardFilterType === 'adjective'
+                        ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                        : 'border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
+                    }
+                  >
+                    Tính từ ({adjCount})
+                  </Button>
+                )}
+                {advCount > 0 && (
+                  <Button
+                    variant={cardFilterType === 'adverb' ? 'default' : 'outline'}
+                    size="xs"
+                    onClick={() => setCardFilterType('adverb')}
+                    className={
+                      cardFilterType === 'adverb'
+                        ? 'bg-teal-600 hover:bg-teal-700 text-white'
+                        : 'border-teal-500/40 text-teal-600 dark:text-teal-400 hover:bg-teal-500/10'
+                    }
+                  >
+                    Trạng từ ({advCount})
+                  </Button>
+                )}
+                {nounCount > 0 && (
+                  <Button
+                    variant={cardFilterType === 'noun' ? 'default' : 'outline'}
+                    size="xs"
+                    onClick={() => setCardFilterType('noun')}
+                    className={
+                      cardFilterType === 'noun'
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'border-blue-500/40 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10'
+                    }
+                  >
+                    Danh từ ({nounCount})
+                  </Button>
+                )}
+                {verbCount > 0 && (
+                  <Button
+                    variant={cardFilterType === 'verb' ? 'default' : 'outline'}
+                    size="xs"
+                    onClick={() => setCardFilterType('verb')}
+                    className={
+                      cardFilterType === 'verb'
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        : 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10'
+                    }
+                  >
+                    Động từ ({verbCount})
+                  </Button>
+                )}
                 {phraseCardCount > 0 && (
                   <Button
                     variant={cardFilterType === 'phrase' ? 'default' : 'outline'}
                     size="xs"
                     onClick={() => setCardFilterType('phrase')}
+                    className={
+                      cardFilterType === 'phrase'
+                        ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                        : 'border-purple-500/40 text-purple-600 dark:text-purple-400 hover:bg-purple-500/10'
+                    }
                   >
                     Cụm từ ({phraseCardCount})
                   </Button>
@@ -1802,6 +1902,19 @@ function HomePage() {
                           VOCABULARY
                         </Badge>
                       )}
+                      {(() => {
+                        const pos = getPosInfo(
+                          card.partOfSpeech || (card.kind === 'phrase' ? 'phrase' : 'noun'),
+                        )
+                        return (
+                          <Badge
+                            variant="outline"
+                            className={`font-bold text-xs ${pos.badgeClass}`}
+                          >
+                            {pos.labelVi} • {pos.abbr}
+                          </Badge>
+                        )
+                      })()}
                       <CardFrameTitle className="text-base font-bold text-foreground">
                         {card.word}
                       </CardFrameTitle>
@@ -1868,8 +1981,8 @@ function HomePage() {
                         </Button>
                       </div>
 
-                      {/* Word & IPA row */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Word, POS & IPA row */}
+                      <div className="grid grid-cols-1 sm:grid-cols-[1fr_170px_1fr] gap-3">
                         <div className="flex flex-col gap-1.5">
                           <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
                             Từ vựng (Word)
@@ -1881,6 +1994,64 @@ function HomePage() {
                             className="font-medium"
                           />
                         </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
+                              Loại từ (POS)
+                            </label>
+                            <span className="text-[0.65rem] text-muted-foreground font-mono">
+                              {getPosInfo(card.partOfSpeech).abbr}
+                            </span>
+                          </div>
+                          <select
+                            value={
+                              normalizePartOfSpeech(card.partOfSpeech) ||
+                              (card.kind === 'phrase' ? 'phrase' : 'noun')
+                            }
+                            onChange={(e) => {
+                              const newPos = e.target.value
+                              const isPhr =
+                                newPos === 'phrase' ||
+                                newPos === 'phrasal verb' ||
+                                newPos === 'idiom'
+                              patchCard(realIndex, {
+                                partOfSpeech: newPos,
+                                kind: isPhr ? 'phrase' : 'word',
+                              })
+                            }}
+                            className="h-8 w-full rounded-lg border border-input bg-card px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
+                          >
+                            {QUICK_POS_OPTIONS.map((opt) => (
+                              <option
+                                key={opt.code}
+                                value={opt.code}
+                                className="bg-popover text-popover-foreground"
+                              >
+                                {opt.label}
+                              </option>
+                            ))}
+                            <option
+                              value="conjunction"
+                              className="bg-popover text-popover-foreground"
+                            >
+                              Liên từ (conj.)
+                            </option>
+                            <option
+                              value="pronoun"
+                              className="bg-popover text-popover-foreground"
+                            >
+                              Đại từ (pron.)
+                            </option>
+                            <option
+                              value="interjection"
+                              className="bg-popover text-popover-foreground"
+                            >
+                              Thán từ (int.)
+                            </option>
+                          </select>
+                        </div>
+
                         <div className="flex flex-col gap-1.5">
                           <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
                             Phiên âm (IPA)

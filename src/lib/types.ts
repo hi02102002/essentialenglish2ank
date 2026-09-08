@@ -43,6 +43,7 @@ export type VocabularyCard = {
   selected: boolean
   unitNumber?: number
   kind?: 'word' | 'phrase'
+  partOfSpeech?: string
   hint?: string
   word: string
   ipa: string
@@ -74,7 +75,9 @@ export type AnyAnkiCard = VocabularyCard | NoteCard
 export type GeneratedVocabulary = Pick<
   VocabularyCard,
   'word' | 'ipa' | 'vietnamese' | 'englishDefinition' | 'example' | 'imageQuery'
->
+> & {
+  partOfSpeech?: string
+}
 
 export type GeneratedNote = {
   title: string

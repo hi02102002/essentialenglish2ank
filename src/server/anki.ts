@@ -3,6 +3,7 @@ import type { AnyAnkiCard, NoteCard, VocabularyCard } from '@/lib/types'
 import { downloadMedia } from './media'
 import { getYoudaoUnsignedVoiceUrl } from '@/lib/youdao'
 import { getBingImageUrl, getBingAlternativeUrl } from '@/lib/bing-image'
+import { getPosInfo } from '@/lib/pos'
 
 function getAnkiExporter(): new (deckName: string) => AnkiExport {
   const mod: any = AnkiExport
@@ -225,7 +226,82 @@ body.night_mode,
   color: var(--anki-badge-note-text, #b45309);
 }
 
+.anki-badge-pos {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.anki-pos-adj {
+  background: #fef3c7;
+  color: #b45309;
+}
+.anki-pos-adv {
+  background: #ccfbf1;
+  color: #0f766e;
+}
+.anki-pos-noun {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.anki-pos-verb {
+  background: #dcfce7;
+  color: #15803d;
+}
+.anki-pos-phrase {
+  background: #f3e8ff;
+  color: #7e22ce;
+}
+.anki-pos-phrv {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+.anki-pos-idiom {
+  background: #fce7f3;
+  color: #be185d;
+}
+.anki-pos-prep, .anki-pos-default {
+  background: #f1f5f9;
+  color: #475569;
+}
+
 /* Explicit Night Mode overrides with !important */
+.nightMode .anki-pos-adj, .night_mode .anki-pos-adj, body.nightMode .anki-pos-adj, body.night_mode .anki-pos-adj {
+  background: #78350f !important;
+  color: #fde68a !important;
+}
+.nightMode .anki-pos-adv, .night_mode .anki-pos-adv, body.nightMode .anki-pos-adv, body.night_mode .anki-pos-adv {
+  background: #134e4a !important;
+  color: #5eead4 !important;
+}
+.nightMode .anki-pos-noun, .night_mode .anki-pos-noun, body.nightMode .anki-pos-noun, body.night_mode .anki-pos-noun {
+  background: #075985 !important;
+  color: #bae6fd !important;
+}
+.nightMode .anki-pos-verb, .night_mode .anki-pos-verb, body.nightMode .anki-pos-verb, body.night_mode .anki-pos-verb {
+  background: #14532d !important;
+  color: #86efac !important;
+}
+.nightMode .anki-pos-phrase, .night_mode .anki-pos-phrase, body.nightMode .anki-pos-phrase, body.night_mode .anki-pos-phrase {
+  background: #581c87 !important;
+  color: #e9d5ff !important;
+}
+.nightMode .anki-pos-phrv, .night_mode .anki-pos-phrv, body.nightMode .anki-pos-phrv, body.night_mode .anki-pos-phrv {
+  background: #312e81 !important;
+  color: #c7d2fe !important;
+}
+.nightMode .anki-pos-idiom, .night_mode .anki-pos-idiom, body.nightMode .anki-pos-idiom, body.night_mode .anki-pos-idiom {
+  background: #831843 !important;
+  color: #fbcfe8 !important;
+}
+.nightMode .anki-pos-prep, .night_mode .anki-pos-prep, .nightMode .anki-pos-default, .night_mode .anki-pos-default, body.nightMode .anki-pos-prep, body.night_mode .anki-pos-prep {
+  background: #334155 !important;
+  color: #e2e8f0 !important;
+}
+
 .nightMode .anki-word,
 .night_mode .anki-word,
 body.nightMode .anki-word,
@@ -383,10 +459,18 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
   const badgeClass = isPhrase ? 'anki-badge-phrase' : 'anki-badge-vocab'
   const badgeText = isPhrase ? 'PHRASE &amp; EXPRESSION' : 'VOCABULARY'
 
+  const posInfo = getPosInfo(card.partOfSpeech || (isPhrase ? 'phrase' : 'noun'))
+  const posBadge = posInfo.labelVi
+    ? `<div class="anki-badge-pos ${posInfo.ankiClass}">${escapeHtml(posInfo.labelVi)} • ${escapeHtml(posInfo.abbr)}</div>`
+    : ''
+
   const front = `
     <style>${CARD_CSS}</style>
     <div class="anki-container">
-      <div class="anki-badge ${badgeClass}">${badgeText}</div>
+      <div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+        <div class="anki-badge ${badgeClass}">${badgeText}</div>
+        ${posBadge}
+      </div>
       ${imageTag ? `<div style="max-width:360px;margin:0 auto 16px">${imageTag}</div>` : ''}
       <div class="anki-word">${escapeHtml(card.word)}</div>
       <div style="margin-top:12px">${wordAudioTag}</div>
@@ -396,7 +480,10 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
     <style>${CARD_CSS}</style>
     <div class="anki-container">
       <div>
-        <div class="anki-badge ${badgeClass}">${badgeText}</div>
+        <div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+          <div class="anki-badge ${badgeClass}">${badgeText}</div>
+          ${posBadge}
+        </div>
         <div class="anki-word">${escapeHtml(card.word)}</div>
         <div class="anki-ipa">${escapeHtml(card.ipa)}</div>
       </div>
@@ -413,6 +500,7 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
   const tag = card.unitNumber ? `unit-${String(card.unitNumber).padStart(2, '0')}` : 'vocabulary'
   const tags = ['vocabulary', tag]
   if (isPhrase) tags.push('phrases')
+  if (posInfo.code && posInfo.code !== 'other') tags.push(`pos-${posInfo.code.replace(/\s+/g, '-')}`)
   apkg.addCard(front, back, { tags })
 }
 
