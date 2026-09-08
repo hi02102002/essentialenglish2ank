@@ -1,7 +1,15 @@
 import { md5 } from '@noble/hashes/legacy.js'
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js'
 
+/**
+ * Youdao Dict Voice types:
+ * 1 = UK (British English)
+ * 2 = US (American English)
+ */
 export type YoudaoDictVoiceType = 1 | 2
+export const VOICE_TYPE_UK: YoudaoDictVoiceType = 1
+export const VOICE_TYPE_US: YoudaoDictVoiceType = 2
+export const DEFAULT_VOICE_TYPE: YoudaoDictVoiceType = VOICE_TYPE_US
 
 type YoudaoSignedDefaults = {
   product: string

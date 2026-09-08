@@ -655,8 +655,8 @@ function HomePage() {
             ...item,
             partOfSpeech: item.partOfSpeech || (isPhrase ? 'phrase' : 'noun'),
             imageUrl: customImg || getBingImageUrl(item.imageQuery),
-            wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 1),
-            exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 1),
+            wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 2),
+            exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 2),
             sourceUrl: lesson?.sourceUrl ?? 'custom-input',
           }
         },
@@ -672,7 +672,7 @@ function HomePage() {
           content: item.content,
           vietnameseExplanation: item.vietnameseExplanation,
           example: item.example,
-          exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 1),
+          exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 2),
           sourceUrl: lesson?.sourceUrl ?? 'custom-input',
         }),
       )
@@ -710,15 +710,15 @@ function HomePage() {
             next.imageUrl = getBingImageUrl(vPatch.imageQuery)
           }
           if (vPatch.word !== undefined) {
-            next.wordAudioUrl = getYoudaoDictVoiceUrl(vPatch.word, 1)
+            next.wordAudioUrl = getYoudaoDictVoiceUrl(vPatch.word, 2)
           }
           if (vPatch.example !== undefined) {
-            next.exampleAudioUrl = getYoudaoDictVoiceUrl(vPatch.example, 1)
+            next.exampleAudioUrl = getYoudaoDictVoiceUrl(vPatch.example, 2)
           }
         } else if (next.type === 'note') {
           const nPatch = patch as Partial<NoteCard>
           if (nPatch.example !== undefined) {
-            next.exampleAudioUrl = getYoudaoDictVoiceUrl(nPatch.example, 1)
+            next.exampleAudioUrl = getYoudaoDictVoiceUrl(nPatch.example, 2)
           }
         }
         return next
@@ -1804,7 +1804,7 @@ function HomePage() {
                             className="gap-1.5 text-xs"
                           >
                             <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
-                            Nghe câu ví dụ ghi chú
+                            Nghe câu ví dụ ghi chú (US)
                           </Button>
                         </div>
                       )}
@@ -1968,7 +1968,7 @@ function HomePage() {
                           className="gap-1.5 text-xs"
                         >
                           <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
-                          Nghe phát âm từ
+                          Nghe phát âm từ (US)
                         </Button>
                         <Button
                           variant="secondary"
@@ -1977,7 +1977,7 @@ function HomePage() {
                           className="gap-1.5 text-xs"
                         >
                           <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
-                          Nghe câu ví dụ
+                          Nghe câu ví dụ (US)
                         </Button>
                       </div>
 
@@ -2054,7 +2054,7 @@ function HomePage() {
 
                         <div className="flex flex-col gap-1.5">
                           <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                            Phiên âm (IPA)
+                            Phiên âm (IPA - US)
                           </label>
                           <Input
                             size="sm"

@@ -6,7 +6,11 @@ import { normalizePartOfSpeech } from '@/lib/pos'
 
 export const FlashcardSchema = z.object({
   word: z.string().describe('The English vocabulary word or phrase'),
-  ipa: z.string().describe('Standard learner-friendly English IPA pronunciation'),
+  ipa: z
+    .string()
+    .describe(
+      'Standard General American (US) English IPA pronunciation enclosed in slashes, e.g. /ˈvɑːtʃər/, /ˈskedʒuːl/, /ˈwɔːtər/',
+    ),
   vietnamese: z.string().describe('Vietnamese translation or concise meaning for learners'),
   englishDefinition: z.string().describe('Original concise English definition, do not copy textbook wording'),
   example: z.string().describe('Natural example sentence illustrating usage'),
@@ -131,7 +135,7 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
   })
 
   const systemPrompt =
-    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should be standard learner-friendly English IPA. Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks. For each word or phrase, accurately classify its part of speech (partOfSpeech: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction).\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should strictly be standard General American (US) English IPA transcription (e.g. rhotic /r/, American vowel conventions like /æ/, /ɑː/, /oʊ/, flap /t/ where common, e.g. /ˈwɑːtər/). Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks. For each word or phrase, accurately classify its part of speech (partOfSpeech: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction).\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
 
   const BATCH_SIZE = 12
   const batches: string[][] = []

@@ -427,12 +427,16 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
     }
   }
 
+  const targetWordAudioUrl = card.wordAudioUrl
+    ? card.wordAudioUrl.replace(/([?&]type=)1\b/, '$12')
+    : getYoudaoUnsignedVoiceUrl(card.word, 2)
+
   try {
     let audio
     try {
-      audio = await downloadMedia(card.wordAudioUrl, 'mp3')
+      audio = await downloadMedia(targetWordAudioUrl, 'mp3')
     } catch {
-      audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.word, 1), 'mp3')
+      audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.word, 2), 'mp3')
     }
     const filename = `${base}-word.${audio.extension}`
     apkg.addMedia(filename, audio.buffer)
@@ -441,12 +445,16 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
     wordAudioTag = ''
   }
 
+  const targetExampleAudioUrl = card.exampleAudioUrl
+    ? card.exampleAudioUrl.replace(/([?&]type=)1\b/, '$12')
+    : getYoudaoUnsignedVoiceUrl(card.example, 2)
+
   try {
     let audio
     try {
-      audio = await downloadMedia(card.exampleAudioUrl, 'mp3')
+      audio = await downloadMedia(targetExampleAudioUrl, 'mp3')
     } catch {
-      audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.example, 1), 'mp3')
+      audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.example, 2), 'mp3')
     }
     const filename = `${base}-example.${audio.extension}`
     apkg.addMedia(filename, audio.buffer)
@@ -509,12 +517,16 @@ async function addNoteCard(apkg: AnkiExport, card: NoteCard, index: number) {
   let exampleAudioTag = ''
 
   if (card.example) {
+    const targetExampleAudioUrl = card.exampleAudioUrl
+      ? card.exampleAudioUrl.replace(/([?&]type=)1\b/, '$12')
+      : getYoudaoUnsignedVoiceUrl(card.example, 2)
+
     try {
       let audio
       try {
-        audio = await downloadMedia(card.exampleAudioUrl, 'mp3')
+        audio = await downloadMedia(targetExampleAudioUrl, 'mp3')
       } catch {
-        audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.example, 1), 'mp3')
+        audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.example, 2), 'mp3')
       }
       const filename = `${base}-example.${audio.extension}`
       apkg.addMedia(filename, audio.buffer)
