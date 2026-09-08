@@ -1890,18 +1890,6 @@ function HomePage() {
                       <span className="flex size-6 items-center justify-center rounded-md bg-muted text-xs font-mono font-bold text-muted-foreground">
                         #{realIndex + 1}
                       </span>
-                      {card.kind === 'phrase' ? (
-                        <Badge
-                          variant="outline"
-                          className="border-purple-500/40 text-purple-600 dark:text-purple-400 bg-purple-500/10 font-bold text-xs"
-                        >
-                          PHRASE / IDIOM
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-primary font-bold text-xs">
-                          VOCABULARY
-                        </Badge>
-                      )}
                       {(() => {
                         const pos = getPosInfo(
                           card.partOfSpeech || (card.kind === 'phrase' ? 'phrase' : 'noun'),

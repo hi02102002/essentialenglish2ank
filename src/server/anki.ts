@@ -208,7 +208,7 @@ body.night_mode,
   font-weight: 700;
   letter-spacing: 0.5px;
   margin-bottom: 12px;
-  text-transform: uppercase;
+  line-height: normal;
 }
 
 .anki-badge-vocab {
@@ -464,21 +464,13 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
   }
 
   const isPhrase = card.kind === 'phrase' || card.word.includes(' ')
-  const badgeClass = isPhrase ? 'anki-badge-phrase' : 'anki-badge-vocab'
-  const badgeText = isPhrase ? 'PHRASE &amp; EXPRESSION' : 'VOCABULARY'
-
   const posInfo = getPosInfo(card.partOfSpeech || (isPhrase ? 'phrase' : 'noun'))
-  const posBadge = posInfo.labelVi
-    ? `<div class="anki-badge-pos ${posInfo.ankiClass}">${escapeHtml(posInfo.labelVi)} • ${escapeHtml(posInfo.abbr)}</div>`
-    : ''
+  const badgeHtml = `<div class="anki-badge ${posInfo.ankiClass}">${escapeHtml(posInfo.labelVi)} • ${escapeHtml(posInfo.abbr)}</div>`
 
   const front = `
     <style>${CARD_CSS}</style>
     <div class="anki-container">
-      <div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;margin-bottom:12px">
-        <div class="anki-badge ${badgeClass}">${badgeText}</div>
-        ${posBadge}
-      </div>
+      ${badgeHtml}
       ${imageTag ? `<div style="max-width:360px;margin:0 auto 16px">${imageTag}</div>` : ''}
       <div class="anki-word">${escapeHtml(card.word)}</div>
       <div style="margin-top:12px">${wordAudioTag}</div>
@@ -488,10 +480,7 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
     <style>${CARD_CSS}</style>
     <div class="anki-container">
       <div>
-        <div style="display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;margin-bottom:10px">
-          <div class="anki-badge ${badgeClass}">${badgeText}</div>
-          ${posBadge}
-        </div>
+        ${badgeHtml}
         <div class="anki-word">${escapeHtml(card.word)}</div>
         <div class="anki-ipa">${escapeHtml(card.ipa)}</div>
       </div>
