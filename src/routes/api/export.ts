@@ -9,6 +9,7 @@ const vocabCardSchema = z.object({
   selected: z.boolean(),
   unitNumber: z.number().optional(),
   word: z.string(),
+  maskedWord: z.string().optional().default(''),
   kind: z.enum(['word', 'phrase']).optional(),
   partOfSpeech: z.string().optional().default(''),
   hint: z.string().optional(),

@@ -59,6 +59,7 @@ export type VocabularyCard = {
   partOfSpeech?: string
   hint?: string
   word: string
+  maskedWord?: string
   ipa: string
   vietnamese: string
   englishDefinition: string

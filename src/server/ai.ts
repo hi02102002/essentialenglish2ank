@@ -107,6 +107,11 @@ async function enrichVocabularyBatch(
         `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${err?.message || err}`,
       )
     }
+    if (err?.status === 405 || err?.message?.includes('405')) {
+      throw new Error(
+        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${err?.message || err}`,
+      )
+    }
     if (err?.status === 502 || err?.message?.includes('502')) {
       throw new Error(
         `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
@@ -189,8 +194,9 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
     throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
   }
 
-  const baseURL =
+  const rawBaseURL =
     process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
+  const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
   const model = process.env.OPENAI_MODEL || 'gpt-5-6'
 
   const adapter = openaiCompatibleText(model, {
@@ -235,7 +241,9 @@ export async function enrichNotes(
     throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
   }
 
-  const baseURL = process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
+  const rawBaseURL =
+    process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
+  const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
   const model = process.env.OPENAI_MODEL || 'gpt-5-6'
 
   const adapter = openaiCompatibleText(model, {
@@ -264,6 +272,21 @@ export async function enrichNotes(
     })
     rawOutputNotes = res.notes || []
   } catch (err: any) {
+    if (err?.status === 401 || err?.message?.includes('401')) {
+      throw new Error(
+        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${err?.message || err}`,
+      )
+    }
+    if (err?.status === 405 || err?.message?.includes('405')) {
+      throw new Error(
+        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${err?.message || err}`,
+      )
+    }
+    if (err?.status === 502 || err?.message?.includes('502')) {
+      throw new Error(
+        `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
+      )
+    }
     try {
       const textOutput = await chat({
         adapter,
@@ -322,8 +345,9 @@ export async function generateLessonChunks(
     throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
   }
 
-  const baseURL =
+  const rawBaseURL =
     process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
+  const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
   const model = process.env.OPENAI_MODEL || 'gpt-5-6'
 
   const adapter = openaiCompatibleText(model, {
@@ -351,6 +375,21 @@ ${storyText ? `Context/Reading text:\n${storyText.slice(0, 1500)}` : ''}`
     })
     rawCards = res.cards || []
   } catch (err: any) {
+    if (err?.status === 401 || err?.message?.includes('401')) {
+      throw new Error(
+        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${err?.message || err}`,
+      )
+    }
+    if (err?.status === 405 || err?.message?.includes('405')) {
+      throw new Error(
+        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${err?.message || err}`,
+      )
+    }
+    if (err?.status === 502 || err?.message?.includes('502')) {
+      throw new Error(
+        `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
+      )
+    }
     try {
       const textOutput = await chat({
         adapter,

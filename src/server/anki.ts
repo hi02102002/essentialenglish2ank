@@ -4,6 +4,7 @@ import { downloadMedia } from './media'
 import { getYoudaoUnsignedVoiceUrl } from '@/lib/youdao'
 import { getBingImageUrl, getBingAlternativeUrl } from '@/lib/bing-image'
 import { getPosInfo } from '@/lib/pos'
+import { generateMaskedWord, formatSpacedMask } from '@/lib/masked-word'
 
 function getAnkiExporter(): new (deckName: string) => AnkiExport {
   const mod: any = AnkiExport
@@ -306,6 +307,112 @@ body.night_mode,
   vertical-align: middle;
 }
 
+.anki-front-container {
+  padding: 18px 12px;
+}
+
+.anki-image-wrapper {
+  max-width: 340px;
+  margin: 0 auto 16px auto;
+}
+
+.anki-prompt-vn {
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--anki-text, #0f172a);
+  margin: 12px auto 16px auto;
+  line-height: 1.4;
+  max-width: 480px;
+}
+
+.anki-cloze-pattern {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #4f46e5;
+  background: var(--anki-box-bg, #f8fafc);
+  border: 2px dashed #a5b4fc;
+  border-radius: 12px;
+  padding: 10px 18px;
+  margin: 10px auto 18px auto;
+  display: inline-block;
+  max-width: 90%;
+  user-select: none;
+}
+
+.anki-type-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 420px;
+  margin: 0 auto 10px auto;
+}
+
+.anki-type-input {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 18px;
+  font-weight: 600;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 2px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+  text-align: center;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.anki-type-input:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.anki-check-btn {
+  background: #6366f1;
+  color: #ffffff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.anki-check-btn:hover {
+  background: #4f46e5;
+}
+
+.anki-feedback {
+  min-height: 24px;
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.anki-back-typed-box {
+  background: var(--anki-box-bg, #f8fafc);
+  border: 1px solid var(--anki-box-border, #e2e8f0);
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin: 10px auto 14px auto;
+  max-width: 440px;
+  font-size: 14px;
+  text-align: center;
+}
+
+.anki-typed-label {
+  color: var(--anki-muted, #64748b);
+  margin-right: 6px;
+}
+
+.anki-typed-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 700;
+}
+
 /* Explicit Night Mode overrides with !important */
 .nightMode .anki-pos-adj, .night_mode .anki-pos-adj, body.nightMode .anki-pos-adj, body.night_mode .anki-pos-adj {
   background: #78350f !important;
@@ -463,6 +570,36 @@ body.nightMode .anki-chunk-meaning,
 body.night_mode .anki-chunk-meaning {
   color: #94a3b8 !important;
 }
+
+.nightMode .anki-prompt-vn, .night_mode .anki-prompt-vn, body.nightMode .anki-prompt-vn, body.night_mode .anki-prompt-vn {
+  color: #f8fafc !important;
+}
+
+.nightMode .anki-cloze-pattern, .night_mode .anki-cloze-pattern, body.nightMode .anki-cloze-pattern, body.night_mode .anki-cloze-pattern {
+  color: #a5b4fc !important;
+  background: #1e1b4b !important;
+  border-color: #6366f1 !important;
+}
+
+.nightMode .anki-type-input, .night_mode .anki-type-input, body.nightMode .anki-type-input, body.night_mode .anki-type-input {
+  background: #0f172a !important;
+  border-color: #334155 !important;
+  color: #f8fafc !important;
+}
+
+.nightMode .anki-type-input:focus, .night_mode .anki-type-input:focus, body.nightMode .anki-type-input:focus, body.night_mode .anki-type-input:focus {
+  border-color: #818cf8 !important;
+}
+
+.nightMode .anki-check-btn, .night_mode .anki-check-btn, body.nightMode .anki-check-btn, body.night_mode .anki-check-btn {
+  background: #4f46e5 !important;
+  color: #ffffff !important;
+}
+
+.nightMode .anki-back-typed-box, .night_mode .anki-back-typed-box, body.nightMode .anki-back-typed-box, body.night_mode .anki-back-typed-box {
+  background: #1e293b !important;
+  border-color: #334155 !important;
+}
 `
 
 async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: number) {
@@ -583,13 +720,82 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
   const posInfo = getPosInfo(card.partOfSpeech || (isPhrase ? 'phrase' : 'noun'))
   const badgeHtml = `<div class="anki-badge ${posInfo.ankiClass}">${escapeHtml(posInfo.labelVi)} • ${escapeHtml(posInfo.abbr)}</div>`
 
+  const maskedWord = card.maskedWord?.trim() || generateMaskedWord(card.word)
+  const spacedMask = formatSpacedMask(maskedWord)
+
   const front = `
     <style>${CARD_CSS}</style>
-    <div class="anki-container">
+    <div class="anki-container anki-front-container">
       ${badgeHtml}
-      ${imageTag ? `<div style="max-width:360px;margin:0 auto 16px">${imageTag}</div>` : ''}
-      <div class="anki-word">${escapeHtml(card.word)}</div>
-      <div style="margin-top:12px">${wordAudioTag}</div>
+      ${imageTag ? `<div class="anki-image-wrapper">${imageTag}</div>` : ''}
+
+      <div class="anki-prompt-vn">
+        <b>🇻🇳 Nghĩa:</b> ${escapeHtml(card.vietnamese)}
+      </div>
+
+      <div class="anki-cloze-pattern" title="Gợi ý ký tự">
+        ${escapeHtml(spacedMask)}
+      </div>
+
+      <div class="anki-type-box">
+        <input
+          type="text"
+          id="anki-input"
+          class="anki-type-input"
+          placeholder="${escapeHtml(maskedWord)}"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+        />
+        <button type="button" id="anki-check-btn" class="anki-check-btn" onclick="checkAnkiAnswer()">
+          Kiểm tra
+        </button>
+      </div>
+      <div id="anki-feedback" class="anki-feedback"></div>
+
+      <script>
+        (function() {
+          var targetWord = ${JSON.stringify(card.word.trim())};
+          var input = document.getElementById('anki-input');
+          var feedback = document.getElementById('anki-feedback');
+
+          if (input) {
+            setTimeout(function() { input.focus(); }, 120);
+            input.addEventListener('keydown', function(e) {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                checkAnkiAnswer();
+              }
+            });
+            input.addEventListener('input', function() {
+              try {
+                if (window.sessionStorage) {
+                  sessionStorage.setItem('anki_last_typed', input.value);
+                }
+              } catch(e) {}
+            });
+          }
+
+          window.checkAnkiAnswer = function() {
+            if (!input || !feedback) return;
+            var val = input.value.trim();
+            if (!val) {
+              feedback.innerHTML = '<span style="color:#eab308">⚠️ Hãy nhập từ trước khi kiểm tra</span>';
+              return;
+            }
+            if (val.toLowerCase() === targetWord.toLowerCase()) {
+              feedback.innerHTML = '<span style="color:#22c55e;font-weight:700">🎉 Chính xác! (Bấm Space để lật thẻ)</span>';
+              input.style.borderColor = '#22c55e';
+              input.style.backgroundColor = 'rgba(34, 197, 94, 0.1)';
+            } else {
+              feedback.innerHTML = '<span style="color:#ef4444;font-weight:700">❌ Chưa đúng! Thử lại hoặc bấm Space xem đáp án</span>';
+              input.style.borderColor = '#ef4444';
+              input.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+            }
+          };
+        })();
+      </script>
     </div>`
 
   const back = `
@@ -597,9 +803,16 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
     <div class="anki-container">
       <div>
         ${badgeHtml}
+        ${imageTag ? `<div class="anki-image-wrapper">${imageTag}</div>` : ''}
         <div class="anki-word">${escapeHtml(card.word)}</div>
-        <div class="anki-ipa">${escapeHtml(card.ipa)}</div>
+        <div class="anki-ipa">${escapeHtml(card.ipa)} ${wordAudioTag}</div>
       </div>
+
+      <div id="anki-back-typed-box" class="anki-back-typed-box" style="display:none">
+        <span class="anki-typed-label">Bạn đã gõ:</span>
+        <span id="anki-back-typed-val" class="anki-typed-val"></span>
+      </div>
+
       <div class="anki-box">
         <div class="anki-vn"><b>🇻🇳</b> ${escapeHtml(card.vietnamese)}</div>
         <div class="anki-en"><b>English:</b> ${escapeHtml(card.englishDefinition)}</div>
@@ -609,6 +822,29 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
       <div class="anki-example-box">
         <div class="anki-example-text"><i>${escapeHtml(card.example)}</i> ${exampleAudioTag}</div>
       </div>
+
+      <script>
+        (function() {
+          var targetWord = ${JSON.stringify(card.word.trim())};
+          var box = document.getElementById('anki-back-typed-box');
+          var valSpan = document.getElementById('anki-back-typed-val');
+          try {
+            var typed = window.sessionStorage ? sessionStorage.getItem('anki_last_typed') : null;
+            if (box && valSpan && typed && typed.trim().length > 0) {
+              box.style.display = 'block';
+              var isCorrect = typed.trim().toLowerCase() === targetWord.toLowerCase();
+              if (isCorrect) {
+                valSpan.innerHTML = '<b style="color:#22c55e">✅ ' + escapeHtml(typed) + '</b>';
+              } else {
+                valSpan.innerHTML = '<b style="color:#ef4444">❌ ' + escapeHtml(typed) + '</b> <span style="color:var(--anki-muted,#64748b)">(Đáp án: <b>' + escapeHtml(targetWord) + '</b>)</span>';
+              }
+            }
+          } catch(e) {}
+          function escapeHtml(t) {
+            return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+          }
+        })();
+      </script>
     </div>`
 
   const tag = card.unitNumber ? `unit-${String(card.unitNumber).padStart(2, '0')}` : 'vocabulary'

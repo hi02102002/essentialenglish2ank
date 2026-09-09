@@ -41,6 +41,7 @@ import { PRESET_BOOKS } from '@/server/lesson'
 import { getBingImageUrl } from '@/lib/bing-image'
 import { getYoudaoDictVoiceUrl } from '@/lib/youdao'
 import { getPosInfo, QUICK_POS_OPTIONS, normalizePartOfSpeech } from '@/lib/pos'
+import { generateMaskedWord, isWordMatch } from '@/lib/masked-word'
 import type {
   AnyAnkiCard,
   ExtractedNote,
@@ -291,6 +292,103 @@ function VocabularyImageEditor({
               </Button>
             </div>
           </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CardTypingTester({
+  targetWord,
+  maskedWord,
+}: {
+  targetWord: string
+  maskedWord?: string
+}) {
+  const [typed, setTyped] = useState('')
+  const [status, setStatus] = useState<'idle' | 'correct' | 'incorrect'>('idle')
+
+  useEffect(() => {
+    setTyped('')
+    setStatus('idle')
+  }, [targetWord, maskedWord])
+
+  const effectiveMask = maskedWord?.trim() || generateMaskedWord(targetWord)
+
+  const handleCheck = () => {
+    if (!typed.trim()) {
+      setStatus('idle')
+      return
+    }
+    const match = isWordMatch(typed, targetWord)
+    setStatus(match ? 'correct' : 'incorrect')
+  }
+
+  const handleReset = () => {
+    setTyped('')
+    setStatus('idle')
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/30 p-2.5">
+      <div className="flex items-center justify-between text-[0.7rem] font-semibold text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <span>⌨️</span> Thử gõ từ này (Active Recall):
+        </span>
+        {status === 'correct' && (
+          <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-0.5">
+            <CheckCircle2Icon className="size-3" /> Chính xác!
+          </span>
+        )}
+        {status === 'incorrect' && (
+          <span className="text-rose-600 dark:text-rose-400 font-bold flex items-center gap-0.5">
+            <AlertCircleIcon className="size-3" /> Chưa đúng! (Đáp án: {targetWord})
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <Input
+          size="sm"
+          value={typed}
+          onChange={(e) => {
+            setTyped(e.target.value)
+            if (status !== 'idle') setStatus('idle')
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleCheck()
+            }
+          }}
+          placeholder={effectiveMask}
+          className={`font-mono text-xs ${
+            status === 'correct'
+              ? 'border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+              : status === 'incorrect'
+              ? 'border-rose-500 bg-rose-500/10 text-rose-800 dark:text-rose-200'
+              : ''
+          }`}
+        />
+        <Button
+          type="button"
+          size="sm"
+          variant={status === 'correct' ? 'default' : 'outline'}
+          className="h-8 px-2.5 text-xs shrink-0 cursor-pointer"
+          onClick={handleCheck}
+        >
+          Kiểm tra
+        </Button>
+        {typed && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-8 px-2 text-xs shrink-0 cursor-pointer text-muted-foreground"
+            onClick={handleReset}
+          >
+            Xóa
+          </Button>
         )}
       </div>
     </div>
@@ -712,6 +810,7 @@ function HomePage() {
           kind: 'phrase',
           partOfSpeech: normalizePartOfSpeech(chunk.partOfSpeech) || 'phrase',
           word: trimmed,
+          maskedWord: generateMaskedWord(trimmed),
           ipa: chunk.ipa || '',
           vietnamese: chunk.meaningVi || card.vietnamese,
           englishDefinition:
@@ -813,6 +912,7 @@ function HomePage() {
           kind: isPhrase ? 'phrase' : 'word',
           hint,
           ...item,
+          maskedWord: generateMaskedWord(item.word),
           chunks,
           partOfSpeech: item.partOfSpeech || (isPhrase ? 'phrase' : 'noun'),
           imageUrl: customImg || getBingImageUrl(item.imageQuery),
@@ -845,6 +945,7 @@ function HomePage() {
             kind: 'phrase',
             partOfSpeech: chunk.partOfSpeech || 'phrase',
             word: chunkText,
+            maskedWord: generateMaskedWord(chunkText),
             ipa: chunk.ipa || '',
             vietnamese: chunk.meaningVi || item.vietnamese,
             englishDefinition:
@@ -912,6 +1013,9 @@ function HomePage() {
           }
           if (vPatch.word !== undefined) {
             next.wordAudioUrl = getYoudaoDictVoiceUrl(vPatch.word, 2)
+            if (vPatch.maskedWord === undefined) {
+              next.maskedWord = generateMaskedWord(vPatch.word)
+            }
           }
           if (vPatch.example !== undefined) {
             next.exampleAudioUrl = getYoudaoDictVoiceUrl(vPatch.example, 2)
@@ -2344,6 +2448,63 @@ function HomePage() {
                           onChange={(e) =>
                             patchCard(realIndex, { vietnamese: e.target.value })
                           }
+                        />
+                      </div>
+
+                      {/* Gợi ý gõ từ (Cloze Pattern & Typing Practice) */}
+                      <div className="flex flex-col gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 sm:p-3.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm">🔤</span>
+                            <label className="text-[0.7rem] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                              Gợi ý gõ từ (Cloze Pattern & Gõ Thử)
+                            </label>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            className="h-6 text-[0.7rem] text-amber-700 dark:text-amber-300 hover:bg-amber-500/15 gap-1 cursor-pointer"
+                            title="Tạo lại mẫu che từ tự động"
+                            onClick={() => {
+                              patchCard(realIndex, {
+                                maskedWord: generateMaskedWord(card.word),
+                              })
+                            }}
+                          >
+                            <RefreshCwIcon className="size-2.5" />
+                            Tạo lại mẫu
+                          </Button>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[0.68rem] text-muted-foreground">
+                              Mẫu hiển thị trên mặt trước thẻ Anki:
+                            </span>
+                            <Input
+                              size="sm"
+                              value={card.maskedWord ?? generateMaskedWord(card.word)}
+                              onChange={(e) =>
+                                patchCard(realIndex, { maskedWord: e.target.value })
+                              }
+                              className="font-mono text-xs font-semibold tracking-wider text-amber-900 dark:text-amber-200 bg-background"
+                              placeholder={generateMaskedWord(card.word)}
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[0.68rem] text-muted-foreground">
+                              Xem trước mẫu gợi ý:
+                            </span>
+                            <div className="h-8 flex items-center px-2.5 rounded-md border border-dashed border-amber-500/40 bg-background font-mono text-xs font-bold tracking-widest text-amber-700 dark:text-amber-300 select-all">
+                              {card.maskedWord || generateMaskedWord(card.word)}
+                            </div>
+                          </div>
+                        </div>
+
+                        <CardTypingTester
+                          targetWord={card.word}
+                          maskedWord={card.maskedWord || generateMaskedWord(card.word)}
                         />
                       </div>
 
