@@ -2,6 +2,7 @@ import { chat } from '@tanstack/ai'
 import { openaiCompatibleText } from '@tanstack/ai-openai/compatible'
 import { z } from 'zod'
 import type { GeneratedNote, GeneratedVocabulary } from '@/lib/types'
+import { OPENAI_CLIENT_OPTIONS } from '@/server/ai-client-config'
 import { normalizePartOfSpeech } from '@/lib/pos'
 
 export const LexicalChunkSchema = z.object({
@@ -208,6 +209,7 @@ export async function enrichVocabulary(
   const adapter = openaiCompatibleText(model, {
     baseURL,
     apiKey,
+    ...OPENAI_CLIENT_OPTIONS,
   })
 
   const systemPrompt = `You are an expert bilingual English lexicographer and pedagogue creating rich, memorable English vocabulary flashcards for Vietnamese learners.
@@ -297,6 +299,7 @@ export async function enrichNotes(
   const adapter = openaiCompatibleText(model, {
     baseURL,
     apiKey,
+    ...OPENAI_CLIENT_OPTIONS,
   })
 
   const systemPrompt = `You create high-yield, practical language study notes from English textbook sections for Vietnamese learners.
@@ -405,6 +408,7 @@ export async function generateLessonChunks(
   const adapter = openaiCompatibleText(model, {
     baseURL,
     apiKey,
+    ...OPENAI_CLIENT_OPTIONS,
   })
 
   const systemPrompt = `You are an expert English teacher specialized in Lexical Chunking methodology. From the provided vocabulary list, lesson theme, and context, generate 6 to 12 high-yield, authentic Lexical Chunks.
