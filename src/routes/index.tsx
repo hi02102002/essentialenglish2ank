@@ -844,7 +844,11 @@ function HomePage() {
     const cleanedVocabItems = Array.from(
       new Set(
         rawVocabItems
-          .map((w) => (typeof w === 'string' ? w.trim() : ''))
+          .map((w) =>
+            typeof w === 'string'
+              ? w.replace(/\s+(?:n|v|adj|adv)[\.,]?$/i, '').trim()
+              : '',
+          )
           .filter((w) => w.length > 0 && w.length <= 300),
       ),
     )
@@ -864,40 +868,61 @@ function HomePage() {
       const phraseSet = new Set(selectedPhrases)
       const topic = lesson?.unitTitle || deckName
 
-      const promises: [Promise<any>, Promise<any>] = [
-        cleanedVocabItems.length > 0
-          ? generateVocabulary({ data: { words: cleanedVocabItems, topic, token } })
-          : Promise.resolve([]),
-        selectedNotes.length > 0
-          ? generateNotes({
-              data: {
-                notes: selectedNotes.map((n) => ({
-                  title: n.title,
-                  content: n.content,
-                })),
-                token,
-              },
-            })
-          : Promise.resolve([]),
-      ]
+      // Client-side batching to prevent Cloudflare/proxy timeouts (100s limit)
+      const CLIENT_BATCH_SIZE = 6
+      const vocabBatches: string[][] = []
+      for (let i = 0; i < cleanedVocabItems.length; i += CLIENT_BATCH_SIZE) {
+        vocabBatches.push(cleanedVocabItems.slice(i, i + CLIENT_BATCH_SIZE))
+      }
 
-      const [generatedVocab, generatedNotes] = await Promise.all(promises)
+      const allGeneratedVocab: any[] = []
+      for (let bIdx = 0; bIdx < vocabBatches.length; bIdx++) {
+        const batch = vocabBatches[bIdx]
+        const fromNum = bIdx * CLIENT_BATCH_SIZE + 1
+        const toNum = Math.min((bIdx + 1) * CLIENT_BATCH_SIZE, cleanedVocabItems.length)
+        setStatus(
+          `Đang dùng TanStack AI tạo thẻ từ vựng: ${fromNum}–${toNum} / ${cleanedVocabItems.length} (${Math.round((fromNum / cleanedVocabItems.length) * 100)}%)…`,
+        )
+        const batchResult = await generateVocabulary({
+          data: { words: batch, topic, token },
+        })
+        if (Array.isArray(batchResult)) {
+          allGeneratedVocab.push(...batchResult)
+        } else if ((batchResult as any)?.error || (batchResult as any)?.message) {
+          throw new Error((batchResult as any)?.error || (batchResult as any)?.message)
+        }
+      }
 
-      const vocabList: any[] = Array.isArray(generatedVocab) ? generatedVocab : []
-      const notesList: any[] = Array.isArray(generatedNotes) ? generatedNotes : []
+      let allGeneratedNotes: any[] = []
+      if (selectedNotes.length > 0) {
+        setStatus(`Đang dùng TanStack AI làm giàu ${selectedNotes.length} ghi chú…`)
+        const notesResult = await generateNotes({
+          data: {
+            notes: selectedNotes.map((n) => ({
+              title: n.title,
+              content: n.content,
+            })),
+            token,
+          },
+        })
+        if (Array.isArray(notesResult)) {
+          allGeneratedNotes = notesResult
+        } else if ((notesResult as any)?.error || (notesResult as any)?.message) {
+          throw new Error((notesResult as any)?.error || (notesResult as any)?.message)
+        }
+      }
+
+      const vocabList: any[] = allGeneratedVocab
+      const notesList: any[] = allGeneratedNotes
 
       if (
         !vocabList.length &&
         !notesList.length &&
         (cleanedVocabItems.length > 0 || selectedNotes.length > 0)
       ) {
-        const errMsg =
-          (generatedVocab as any)?.error ||
-          (generatedVocab as any)?.message ||
-          (generatedNotes as any)?.error ||
-          (generatedNotes as any)?.message ||
-          'Không nhận được dữ liệu hợp lệ từ dịch vụ AI. Vui lòng kiểm tra lại cấu hình API và thử lại!'
-        throw new Error(errMsg)
+        throw new Error(
+          'Không nhận được dữ liệu hợp lệ từ dịch vụ AI. Vui lòng kiểm tra lại cấu hình API và thử lại!',
+        )
       }
 
       const vocabCards: VocabularyCard[] = []

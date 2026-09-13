@@ -51,8 +51,8 @@ export function cleanHtmlText(html: string): string {
 
 function cleanVocabularyItem(value: string) {
   return normalizeText(value)
-    // The dataset sometimes appends a bare part-of-speech marker, e.g. "smile   v".
-    .replace(/\s+(?:n|v|adj|adv)\.?$/i, '')
+    // The dataset sometimes appends a bare part-of-speech marker, e.g. "smile   v", "chat n,".
+    .replace(/\s+(?:n|v|adj|adv)[\.,]?$/i, '')
     .trim()
 }
 

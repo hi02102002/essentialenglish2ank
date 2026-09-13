@@ -102,13 +102,24 @@ ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
   let rawCards: z.infer<typeof FlashcardSchema>[] = []
 
   try {
-    const res = await chat({
+    const textOutput = await chat({
       adapter,
       systemPrompts: [systemPrompt],
       messages: [{ role: 'user', content: userPrompt }],
-      outputSchema: FlashcardsOutputSchema,
+      stream: false,
     })
-    rawCards = res.cards || []
+    const cleaned = extractJson(textOutput)
+    const parsed = JSON.parse(cleaned)
+    if (Array.isArray(parsed)) {
+      rawCards = parsed
+    } else if (Array.isArray(parsed?.cards)) {
+      rawCards = parsed.cards
+    } else {
+      const validated = FlashcardsOutputSchema.safeParse(parsed)
+      if (validated.success) {
+        rawCards = validated.data.cards
+      }
+    }
   } catch (err: any) {
     if (err?.status === 401 || err?.message?.includes('401')) {
       throw new Error(
@@ -125,25 +136,9 @@ ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
         `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
       )
     }
-
-    try {
-      const textOutput = await chat({
-        adapter,
-        systemPrompts: [systemPrompt],
-        messages: [{ role: 'user', content: userPrompt }],
-        stream: false,
-      })
-      const cleaned = extractJson(textOutput)
-      const parsed = JSON.parse(cleaned)
-      const validated = FlashcardsOutputSchema.parse(
-        Array.isArray(parsed) ? { cards: parsed } : parsed,
-      )
-      rawCards = validated.cards
-    } catch (fallbackErr: any) {
-      throw new Error(
-        `Failed to generate vocabulary using TanStack AI: ${err?.message || fallbackErr?.message || err}`,
-      )
-    }
+    throw new Error(
+      `Failed to generate vocabulary using TanStack AI: ${err?.message || err}`,
+    )
   }
 
   return words.map((origWord, index) => {
@@ -241,14 +236,33 @@ CORE PRINCIPLES & DIVERSITY MANDATES:
 
 You MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string, "chunks": [{"text": string, "ipa": string, "meaningVi": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
 
+  async function pMap<T, R>(
+    items: T[],
+    fn: (item: T) => Promise<R>,
+    concurrency = 2,
+  ): Promise<R[]> {
+    const results: R[] = new Array(items.length)
+    let index = 0
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (index < items.length) {
+        const current = index++
+        results[current] = await fn(items[current])
+      }
+    })
+    await Promise.all(workers)
+    return results
+  }
+
   const BATCH_SIZE = 6
   const batches: string[][] = []
   for (let i = 0; i < words.length; i += BATCH_SIZE) {
     batches.push(words.slice(i, i + BATCH_SIZE))
   }
 
-  const results = await Promise.all(
-    batches.map((batch) => enrichVocabularyBatch(batch, adapter, systemPrompt, topic)),
+  const results = await pMap(
+    batches,
+    (batch) => enrichVocabularyBatch(batch, adapter, systemPrompt, topic),
+    2,
   )
 
   return (results.flat() || []).filter(Boolean)
@@ -305,13 +319,24 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"ti
   let rawOutputNotes: z.infer<typeof NoteSchema>[] = []
 
   try {
-    const res = await chat({
+    const textOutput = await chat({
       adapter,
       systemPrompts: [systemPrompt],
       messages: [{ role: 'user', content: userPrompt }],
-      outputSchema: NotesOutputSchema,
+      stream: false,
     })
-    rawOutputNotes = res.notes || []
+    const cleaned = extractJson(textOutput)
+    const parsed = JSON.parse(cleaned)
+    if (Array.isArray(parsed)) {
+      rawOutputNotes = parsed
+    } else if (Array.isArray(parsed?.notes)) {
+      rawOutputNotes = parsed.notes
+    } else {
+      const validated = NotesOutputSchema.safeParse(parsed)
+      if (validated.success) {
+        rawOutputNotes = validated.data.notes
+      }
+    }
   } catch (err: any) {
     if (err?.status === 401 || err?.message?.includes('401')) {
       throw new Error(
@@ -328,24 +353,9 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"ti
         `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
       )
     }
-    try {
-      const textOutput = await chat({
-        adapter,
-        systemPrompts: [systemPrompt],
-        messages: [{ role: 'user', content: userPrompt }],
-        stream: false,
-      })
-      const cleaned = extractJson(textOutput)
-      const parsed = JSON.parse(cleaned)
-      const validated = NotesOutputSchema.parse(
-        Array.isArray(parsed) ? { notes: parsed } : parsed,
-      )
-      rawOutputNotes = validated.notes
-    } catch (fallbackErr: any) {
-      throw new Error(
-        `Failed to enrich notes using TanStack AI: ${err?.message || fallbackErr?.message || err}`,
-      )
-    }
+    throw new Error(
+      `Failed to enrich notes using TanStack AI: ${err?.message || err}`,
+    )
   }
 
   return rawNotes.map((orig, index) => {
@@ -428,13 +438,24 @@ ${storyText ? `Context / Reading text from lesson:\n${storyText.slice(0, 1500)}`
   let rawCards: z.infer<typeof StandaloneChunkSchema>[] = []
 
   try {
-    const res = await chat({
+    const textOutput = await chat({
       adapter,
       systemPrompts: [systemPrompt],
       messages: [{ role: 'user', content: userPrompt }],
-      outputSchema: StandaloneChunksOutputSchema,
+      stream: false,
     })
-    rawCards = res.cards || []
+    const cleaned = extractJson(textOutput)
+    const parsed = JSON.parse(cleaned)
+    if (Array.isArray(parsed)) {
+      rawCards = parsed
+    } else if (Array.isArray(parsed?.cards)) {
+      rawCards = parsed.cards
+    } else {
+      const validated = StandaloneChunksOutputSchema.safeParse(parsed)
+      if (validated.success) {
+        rawCards = validated.data.cards
+      }
+    }
   } catch (err: any) {
     if (err?.status === 401 || err?.message?.includes('401')) {
       throw new Error(
@@ -451,24 +472,9 @@ ${storyText ? `Context / Reading text from lesson:\n${storyText.slice(0, 1500)}`
         `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
       )
     }
-    try {
-      const textOutput = await chat({
-        adapter,
-        systemPrompts: [systemPrompt],
-        messages: [{ role: 'user', content: userPrompt }],
-        stream: false,
-      })
-      const cleaned = extractJson(textOutput)
-      const parsed = JSON.parse(cleaned)
-      const validated = StandaloneChunksOutputSchema.parse(
-        Array.isArray(parsed) ? { cards: parsed } : parsed,
-      )
-      rawCards = validated.cards
-    } catch (fallbackErr: any) {
-      throw new Error(
-        `Failed to generate chunks using TanStack AI: ${err?.message || fallbackErr?.message || err}`,
-      )
-    }
+    throw new Error(
+      `Failed to generate chunks using TanStack AI: ${err?.message || err}`,
+    )
   }
 
   return rawCards.map((item) => ({
