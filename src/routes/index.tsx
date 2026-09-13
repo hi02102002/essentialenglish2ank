@@ -895,20 +895,28 @@ function HomePage() {
 
       let allGeneratedNotes: any[] = []
       if (selectedNotes.length > 0) {
-        setStatus(`Đang dùng TanStack AI làm giàu ${selectedNotes.length} ghi chú…`)
-        const notesResult = await generateNotes({
-          data: {
-            notes: selectedNotes.map((n) => ({
-              title: n.title,
-              content: n.content,
-            })),
-            token,
-          },
-        })
-        if (Array.isArray(notesResult)) {
-          allGeneratedNotes = notesResult
-        } else if ((notesResult as any)?.error || (notesResult as any)?.message) {
-          throw new Error((notesResult as any)?.error || (notesResult as any)?.message)
+        const NOTE_BATCH_SIZE = 3
+        for (let i = 0; i < selectedNotes.length; i += NOTE_BATCH_SIZE) {
+          const noteBatch = selectedNotes.slice(i, i + NOTE_BATCH_SIZE)
+          const fromNote = i + 1
+          const toNote = Math.min(i + NOTE_BATCH_SIZE, selectedNotes.length)
+          setStatus(
+            `Đang dùng TanStack AI làm giàu ghi chú: ${fromNote}–${toNote} / ${selectedNotes.length}…`,
+          )
+          const notesResult = await generateNotes({
+            data: {
+              notes: noteBatch.map((n) => ({
+                title: n.title,
+                content: n.content,
+              })),
+              token,
+            },
+          })
+          if (Array.isArray(notesResult)) {
+            allGeneratedNotes.push(...notesResult)
+          } else if ((notesResult as any)?.error || (notesResult as any)?.message) {
+            throw new Error((notesResult as any)?.error || (notesResult as any)?.message)
+          }
         }
       }
 
@@ -1101,12 +1109,14 @@ function HomePage() {
   async function onExport() {
     if (!selectedCards.length) return
     setError('')
-    setStatus(`Đang nén ${selectedCards.length} thẻ cùng media thành gói Anki (.apkg)…`)
+    setStatus(`Đang khởi tạo tiến trình xuất ${selectedCards.length} thẻ Anki (.apkg)…`)
     setIsExporting(true)
 
     try {
       const token = getStoredToken()
-      const response = await fetch('/api/export', {
+
+      // 1. Initiate background export job (responds in milliseconds)
+      const startRes = await fetch('/api/export', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -1114,17 +1124,59 @@ function HomePage() {
         },
         body: JSON.stringify({ deckName, cards: selectedCards, token }),
       })
-      if (!response.ok) {
-        if (response.status === 401) {
+
+      if (!startRes.ok) {
+        if (startRes.status === 401) {
           sessionStorage.removeItem('anki_auth_token')
           setIsAuthenticated(false)
           setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
           return
         }
-        const text = await response.text()
-        throw new Error(text || `Xuất thẻ thất bại (${response.status})`)
+        const text = await startRes.text()
+        throw new Error(text || `Khởi tạo xuất thẻ thất bại (${startRes.status})`)
       }
-      const blob = await response.blob()
+
+      const { jobId } = await startRes.json()
+      if (!jobId) {
+        throw new Error('Không nhận được mã tiến trình xuất thẻ từ máy chủ.')
+      }
+
+      // 2. Poll progress every 1000ms until completed
+      let isCompleted = false
+      while (!isCompleted) {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        const statusRes = await fetch(`/api/export?id=${encodeURIComponent(jobId)}`)
+        if (!statusRes.ok) {
+          const errText = await statusRes.text()
+          throw new Error(errText || 'Lỗi kiểm tra tiến trình xuất thẻ.')
+        }
+
+        const jobStatus = await statusRes.json()
+        if (jobStatus.status === 'error') {
+          throw new Error(jobStatus.error || 'Xuất file Anki thất bại trong quá trình tải media.')
+        }
+
+        if (jobStatus.status === 'completed') {
+          isCompleted = true
+          setStatus('Đã đóng gói xong! Đang tải file về máy…')
+          break
+        }
+
+        const processed = jobStatus.processed ?? 0
+        const total = jobStatus.total ?? selectedCards.length
+        const percent = jobStatus.percent ?? (total > 0 ? Math.round((processed / total) * 100) : 0)
+        setStatus(
+          `Đang tải media và đóng gói Anki: ${processed}/${total} thẻ (${percent}%)…`,
+        )
+      }
+
+      // 3. Download finished .apkg instantly (< 100ms)
+      const downloadRes = await fetch(`/api/export?id=${encodeURIComponent(jobId)}&download=1`)
+      if (!downloadRes.ok) {
+        throw new Error(`Tải file hoàn tất thất bại (${downloadRes.status})`)
+      }
+
+      const blob = await downloadRes.blob()
       const href = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = href
@@ -1135,7 +1187,7 @@ function HomePage() {
       anchor.click()
       anchor.remove()
       URL.revokeObjectURL(href)
-      setStatus('Xuất file Anki (.apkg) thành công!')
+      setStatus(`Xuất file Anki (${selectedCards.length} thẻ) thành công!`)
     } catch (err) {
       setStatus('')
       if (err instanceof Error && err.message.includes('401')) {

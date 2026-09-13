@@ -1061,12 +1061,17 @@ async function prepareNoteCard(
   }
 }
 
-export async function buildApkg(deckName: string, cards: AnyAnkiCard[]) {
+export async function buildApkg(
+  deckName: string,
+  cards: AnyAnkiCard[],
+  onProgress?: (processed: number, total: number) => void,
+) {
   const download = createMediaDownloader()
-  const CONCURRENCY = 10
+  const CONCURRENCY = 8
 
   const preparedCards: PreparedCard[] = new Array(cards.length)
   let nextIndex = 0
+  let completedCount = 0
 
   const workers = Array.from({ length: Math.min(cards.length, CONCURRENCY) }, async () => {
     while (nextIndex < cards.length) {
@@ -1076,6 +1081,14 @@ export async function buildApkg(deckName: string, cards: AnyAnkiCard[]) {
         preparedCards[idx] = await prepareNoteCard(card, idx, download)
       } else {
         preparedCards[idx] = await prepareVocabularyCard(card, idx, download)
+      }
+      completedCount++
+      if (onProgress) {
+        try {
+          onProgress(completedCount, cards.length)
+        } catch {
+          // ignore progress callback errors
+        }
       }
     }
   })

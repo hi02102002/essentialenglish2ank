@@ -17,7 +17,7 @@ const BROWSER_UA =
 export async function downloadMedia(
   url: string,
   fallbackExtension: string,
-  timeoutMs: number = 6_000,
+  timeoutMs: number = 3_500,
 ) {
   if (!url || !/^https?:\/\//i.test(url.trim())) {
     throw new Error('Invalid media URL')
