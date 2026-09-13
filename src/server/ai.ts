@@ -251,7 +251,7 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"wo
     batches.map((batch) => enrichVocabularyBatch(batch, adapter, systemPrompt, topic)),
   )
 
-  return results.flat()
+  return (results.flat() || []).filter(Boolean)
 }
 
 export const NoteSchema = z.object({

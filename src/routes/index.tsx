@@ -732,8 +732,9 @@ function HomePage() {
         },
       })
 
-      if (!generated.length) {
-        setStatus('Không tìm thấy chunks mới nào.')
+      const chunksList = Array.isArray(generated) ? generated : []
+      if (!chunksList.length) {
+        setStatus('Không tìm thấy chunks mới nào hoặc dịch vụ AI không trả về kết quả.')
         return
       }
 
@@ -741,7 +742,8 @@ function HomePage() {
       const newPhrases: string[] = []
       const newHints: Record<string, string> = { ...phraseHints }
 
-      for (const item of generated) {
+      for (const item of chunksList) {
+        if (!item || !item.word) continue
         const lower = item.word.toLowerCase()
         if (!existingSet.has(lower)) {
           existingSet.add(lower)
@@ -838,14 +840,22 @@ function HomePage() {
   }
 
   async function onGenerateCards() {
-    const totalVocabItems = [...selectedWords, ...selectedPhrases]
-    if (!totalVocabItems.length && !selectedNotes.length) {
+    const rawVocabItems = [...selectedWords, ...selectedPhrases]
+    const cleanedVocabItems = Array.from(
+      new Set(
+        rawVocabItems
+          .map((w) => (typeof w === 'string' ? w.trim() : ''))
+          .filter((w) => w.length > 0 && w.length <= 300),
+      ),
+    )
+
+    if (!cleanedVocabItems.length && !selectedNotes.length) {
       setError('Vui lòng chọn ít nhất 1 từ vựng, cụm từ hoặc ghi chú.')
       return
     }
     setError('')
     setStatus(
-      `Đang dùng TanStack AI tạo thẻ cho ${selectedWords.length} từ vựng, ${selectedPhrases.length} cụm từ và ${selectedNotes.length} ghi chú…`,
+      `Đang dùng TanStack AI tạo thẻ cho ${cleanedVocabItems.length} từ vựng/cụm từ và ${selectedNotes.length} ghi chú…`,
     )
     setIsGenerating(true)
 
@@ -855,8 +865,8 @@ function HomePage() {
       const topic = lesson?.unitTitle || deckName
 
       const promises: [Promise<any>, Promise<any>] = [
-        totalVocabItems.length > 0
-          ? generateVocabulary({ data: { words: totalVocabItems, topic, token } })
+        cleanedVocabItems.length > 0
+          ? generateVocabulary({ data: { words: cleanedVocabItems, topic, token } })
           : Promise.resolve([]),
         selectedNotes.length > 0
           ? generateNotes({
@@ -873,10 +883,28 @@ function HomePage() {
 
       const [generatedVocab, generatedNotes] = await Promise.all(promises)
 
+      const vocabList: any[] = Array.isArray(generatedVocab) ? generatedVocab : []
+      const notesList: any[] = Array.isArray(generatedNotes) ? generatedNotes : []
+
+      if (
+        !vocabList.length &&
+        !notesList.length &&
+        (cleanedVocabItems.length > 0 || selectedNotes.length > 0)
+      ) {
+        const errMsg =
+          (generatedVocab as any)?.error ||
+          (generatedVocab as any)?.message ||
+          (generatedNotes as any)?.error ||
+          (generatedNotes as any)?.message ||
+          'Không nhận được dữ liệu hợp lệ từ dịch vụ AI. Vui lòng kiểm tra lại cấu hình API và thử lại!'
+        throw new Error(errMsg)
+      }
+
       const vocabCards: VocabularyCard[] = []
       const createdWordSet = new Set<string>()
 
-      for (const [index, item] of (generatedVocab as any[]).entries()) {
+      for (const [index, item] of vocabList.entries()) {
+        if (!item || !item.word) continue
         const isPhrase = phraseSet.has(item.word) || item.word.includes(' ')
         const customImg = itemImages[item.word]
         const hint = phraseHints[item.word]
@@ -964,20 +992,26 @@ function HomePage() {
         }
       }
 
-      const noteCards: NoteCard[] = generatedNotes.map(
-        (item: any, index: number): NoteCard => ({
-          type: 'note',
-          id: `note-${Date.now()}-${index}`,
-          selected: true,
-          unitNumber: lesson?.unitNumber,
-          title: item.title,
-          content: item.content,
-          vietnameseExplanation: item.vietnameseExplanation,
-          example: item.example,
-          exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 2),
-          sourceUrl: lesson?.sourceUrl ?? 'custom-input',
-        }),
-      )
+      const noteCards: NoteCard[] = notesList
+        .filter((item: any) => item && (item.title || item.content))
+        .map(
+          (item: any, index: number): NoteCard => ({
+            type: 'note',
+            id: `note-${Date.now()}-${index}`,
+            selected: true,
+            unitNumber: lesson?.unitNumber,
+            title: item.title || 'Note',
+            content: Array.isArray(item.content)
+              ? item.content
+              : [String(item.content || '')],
+            vietnameseExplanation: item.vietnameseExplanation || '',
+            example: item.example || '',
+            exampleAudioUrl: item.example
+              ? getYoudaoDictVoiceUrl(item.example, 2)
+              : '',
+            sourceUrl: lesson?.sourceUrl ?? 'custom-input',
+          }),
+        )
 
       const nextCards: AnyAnkiCard[] = [...vocabCards, ...noteCards]
       setCards(nextCards)

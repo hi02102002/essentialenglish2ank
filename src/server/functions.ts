@@ -64,14 +64,15 @@ export const analyzeLesson = createServerFn({ method: 'POST' })
 export const generateVocabulary = createServerFn({ method: 'POST' })
   .validator(
     z.object({
-      words: z.array(z.string().min(1).max(120)).min(1).max(150),
+      words: z.array(z.string().min(1).max(300)).min(1).max(500),
       topic: z.string().optional(),
       token: z.string().optional(),
     }),
   )
-  .handler(({ data }) => {
+  .handler(async ({ data }) => {
     assertAuthorized(data.token)
-    return enrichVocabulary(data.words, data.topic)
+    const result = await enrichVocabulary(data.words, data.topic)
+    return result || []
   })
 
 export const generateNotes = createServerFn({ method: 'POST' })
@@ -85,27 +86,29 @@ export const generateNotes = createServerFn({ method: 'POST' })
           }),
         )
         .min(1)
-        .max(20),
+        .max(50),
       token: z.string().optional(),
     }),
   )
-  .handler(({ data }) => {
+  .handler(async ({ data }) => {
     assertAuthorized(data.token)
-    return enrichNotes(data.notes)
+    const result = await enrichNotes(data.notes)
+    return result || []
   })
 
 export const generateChunks = createServerFn({ method: 'POST' })
   .validator(
     z.object({
-      words: z.array(z.string().min(1).max(120)).min(1).max(100),
+      words: z.array(z.string().min(1).max(300)).min(1).max(200),
       storyText: z.string().optional(),
       topic: z.string().optional(),
       token: z.string().optional(),
     }),
   )
-  .handler(({ data }) => {
+  .handler(async ({ data }) => {
     assertAuthorized(data.token)
-    return generateLessonChunks(data.words, data.storyText, data.topic)
+    const result = await generateLessonChunks(data.words, data.storyText, data.topic)
+    return result || []
   })
 
 
