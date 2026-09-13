@@ -86,10 +86,18 @@ async function enrichVocabularyBatch(
   words: string[],
   adapter: any,
   systemPrompt: string,
+  topic?: string,
 ): Promise<GeneratedVocabulary[]> {
-  const userPrompt = `Create flashcards for each item, preserving exact item order. Return JSON {"cards": [...]}:\n${words
-    .map((word, i) => `${i + 1}. ${word}`)
-    .join('\n')}`
+  const topicContext = topic?.trim() ? `\nLesson Theme / Context: "${topic.trim()}"\n` : ''
+  const userPrompt = `Create rich, engaging flashcards for the following items preserving exact item order.${topicContext}
+MANDATORY DIVERSITY & ANTI-REPETITION RULES:
+1. SCENARIO & SUBJECT VARIETY: Each card in this batch MUST feature a completely distinct, relatable scenario and subject. Do NOT repeat sentence openers. Do NOT start consecutive sentences with "She" or "He". Use a rich mix of subjects (e.g. "I", "we", "my roommate", "commuters", "the flight attendant", "local residents", "the barista", "the doctor", "travelers").
+2. SENTENCE STRUCTURE VARIETY: Avoid formulaic patterns like "[Subject] [verb]ed [object] because [reason]". Use diverse structures (temporal openers: "On busy weekday mornings...", conditional clauses: "If you want to...", dialogue quotes: "'Don't forget to...', she reminded me", compound sentences with coordinating conjunctions).
+3. LEXICAL CHUNKS CONTRAST: The 1 to 2 lexical chunks for each word MUST be distinct in type and function. NEVER provide redundant pairs like "take a bath" and "have a bath". Instead, pick 1 strong collocation (e.g. "run a warm bath") and 1 conversational expression, phrasal verb, or idiom (e.g. "soak in the tub").
+4. VIVID PHOTOGRAPHIC IMAGE QUERIES: Describe clear, high-resolution, atmospheric photography scenes suitable for image search (e.g. "steaming ceramic coffee mug on rustic wooden table morning sunlight photography"). Avoid generic "person doing X".
+
+Items to process:
+${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
 
   let rawCards: z.infer<typeof FlashcardSchema>[] = []
 
@@ -186,7 +194,10 @@ async function enrichVocabularyBatch(
   })
 }
 
-export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabulary[]> {
+export async function enrichVocabulary(
+  words: string[],
+  topic?: string,
+): Promise<GeneratedVocabulary[]> {
   if (!words.length) return []
 
   const apiKey = process.env.OPENAI_API_KEY
@@ -204,8 +215,31 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
     apiKey,
   })
 
-  const systemPrompt =
-    'You create beginner/intermediate English vocabulary flashcards for Vietnamese learners. Write original concise definitions and examples; do not copy textbook wording. Preserve phrasal expressions and idioms exactly. IPA should strictly be standard General American (US) English IPA transcription (e.g. rhotic /r/, American vowel conventions like /æ/, /ɑː/, /oʊ/, flap /t/ where common, e.g. /ˈwɑːtər/). Image queries should describe a concrete, safe, easy-to-recognize visual and contain no quotation marks. For each word or phrase, accurately classify its part of speech (partOfSpeech: noun, verb, adjective, adverb, phrase, phrasal verb, idiom, preposition, or conjunction). For each word or phrase, provide 1 to 2 high-frequency lexical chunks or collocations (chunks: [{"text": string, "ipa": string, "meaningVi": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]) showing how native speakers naturally use this word in full phrases (e.g. for "advantage": [{"text": "take advantage of", "ipa": "/teɪk ədˈvæn.tɪdʒ əv/", "meaningVi": "tận dụng, lợi dụng", "englishDefinition": "to make good use of an opportunity", "example": "She took advantage of the sunny day to wash her clothes.", "imageQuery": "person hanging laundry sunny day", "partOfSpeech": "phrase"}]). Each chunk MUST have its own accurate General American US IPA, Vietnamese translation, concise English definition, a natural example sentence demonstrating that chunk, and a safe concrete visual imageQuery.\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string, "chunks": [{"text": string, "ipa": string, "meaningVi": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+  const systemPrompt = `You are an expert bilingual English lexicographer and pedagogue creating rich, memorable English vocabulary flashcards for Vietnamese learners.
+
+CORE PRINCIPLES & DIVERSITY MANDATES:
+1. ANTI-REPETITION & VARIETY (CRITICAL):
+   - Never generate monotonous, cookie-cutter sentence formulas.
+   - Do NOT start sentences repeatedly with "She..." or "He...". Use diverse perspectives: first-person ("I / We"), realistic third-person agents ("the barista", "commuters", "our tour guide", "my roommate", "passengers"), second-person advice ("When you...", "Make sure to..."), or situational openers ("After an exhausting shift...", "On chilly autumn mornings...").
+   - Mix sentence types: complex sentences with subordinate clauses, natural conversational quotes, and vivid real-life scenes.
+2. LEXICAL CHUNKS DIVERSITY:
+   - For each word/phrase, provide 1 to 2 high-frequency, authentic lexical chunks showing how native speakers naturally use this word.
+   - NO REDUNDANCY: Never supply two nearly identical chunks (e.g. NEVER give both "take a bath" and "have a bath"; NEVER give both "go to sleep" and "fall asleep").
+   - Prefer contrasting categories: strong collocations (Verb + Noun, Adj + Noun, e.g. "strike a balance", "hectic schedule", "run a bath"), phrasal verbs, idioms, or situational phrases (e.g. "sleep in", "at the crack of dawn", "in a hurry").
+   - Each chunk MUST have its own accurate General American US IPA, natural Vietnamese translation, concise English usage explanation, and contextual example sentence.
+3. LEARNER-FRIENDLY ENGLISH DEFINITIONS:
+   - Write in the style of Oxford Advanced Learner's Dictionary / Cambridge Dictionary: clear, conversational, engaging, explaining how and when the word is used.
+   - Avoid dry, circular robotic boilerplate like "the act of...", "a time when you wash your body", "a device used for...".
+4. IDIOMATIC VIETNAMESE (TỰ NHIÊN, CHUẨN XÁC):
+   - Translate into natural, idiomatic Vietnamese that reflects actual everyday speech and modern usage.
+   - Include common collocations or usage notes in parentheses where helpful (e.g. "bồn tắm; việc tắm bồn / ngâm mình"). Avoid literal, clunky machine translation.
+5. GENERAL AMERICAN (US) IPA:
+   - Use standard General American US IPA transcription enclosed in slashes (e.g. rhotic /r/, flap [t] /t̬/, American vowels like /æ/, /ɑː/, /oʊ/, e.g. /ˈwɑː.t̬ɚ/, /ˈskedʒ.uːl/).
+6. PHOTOGRAPHY IMAGE QUERIES:
+   - Write concrete visual descriptions with atmospheric, photographic keywords (lighting, setting, composition) suitable for search engines.
+   - Avoid generic phrases like "person doing X" or "man holding Y". No quotation marks.
+
+You MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string, "chunks": [{"text": string, "ipa": string, "meaningVi": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
 
   const BATCH_SIZE = 6
   const batches: string[][] = []
@@ -214,7 +248,7 @@ export async function enrichVocabulary(words: string[]): Promise<GeneratedVocabu
   }
 
   const results = await Promise.all(
-    batches.map((batch) => enrichVocabularyBatch(batch, adapter, systemPrompt)),
+    batches.map((batch) => enrichVocabularyBatch(batch, adapter, systemPrompt, topic)),
   )
 
   return results.flat()
@@ -251,8 +285,15 @@ export async function enrichNotes(
     apiKey,
   })
 
-  const systemPrompt =
-    'You create high-yield language study notes from English textbook sections for Vietnamese learners. For each section, summarize the key expressions, collocations, or grammar rules into clean bullet items. Provide a clear, concise Vietnamese explanation (vietnameseExplanation) explaining when and how to use them. Provide a realistic, memorable example sentence (example) in English showing these phrases in context.\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"title": string, "content": string[], "vietnameseExplanation": string, "example": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+  const systemPrompt = `You create high-yield, practical language study notes from English textbook sections for Vietnamese learners.
+
+GUIDELINES:
+- Distill key collocations, structural patterns, and usage rules into crisp, memorable bullet points.
+- Highlight subtle nuances, common learner pitfalls (prepositions, false friends, formal vs informal register).
+- vietnameseExplanation: Clear, engaging explanation in natural Vietnamese explaining WHEN, WHY, and HOW native speakers use these patterns in real life.
+- example: A realistic, memorable contextual example sentence in General American English bringing the rule to life. Avoid generic, monotonous templates.
+
+You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"title": string, "content": string[], "vietnameseExplanation": string, "example": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
 
   const userPrompt = `Enrich the following ${rawNotes.length} language notes for Vietnamese learners. Return JSON {"notes": [...]}:\n${rawNotes
     .map(
@@ -339,6 +380,7 @@ export const StandaloneChunksOutputSchema = z.object({
 export async function generateLessonChunks(
   words: string[],
   storyText?: string,
+  topic?: string,
 ): Promise<GeneratedVocabulary[]> {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
@@ -355,14 +397,33 @@ export async function generateLessonChunks(
     apiKey,
   })
 
-  const systemPrompt =
-    'You are an expert English teacher specialized in Lexical Chunking methodology. From the provided vocabulary list and optional context, generate 6 to 12 high-yield, natural Lexical Chunks (collocations, phrasal verbs, common conversational phrases, or fixed expressions). Each chunk must be a natural multi-word unit that native speakers use as a single piece (e.g. "take advantage of something", "breathe in and out", "online learning has advantages", "make a quick decision", "at the end of the day"). For each chunk, provide: word (the chunk string), accurate General American US IPA, Vietnamese meaning, concise English definition, natural example sentence in US English, safe concrete imageQuery, and partOfSpeech (e.g. "phrase", "phrasal verb", or "idiom").\n\nYou MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.'
+  const systemPrompt = `You are an expert English teacher specialized in Lexical Chunking methodology. From the provided vocabulary list, lesson theme, and context, generate 6 to 12 high-yield, authentic Lexical Chunks.
 
-  const userPrompt = `Generate lexical chunks based on this vocabulary and context:
+CRITICAL DIVERSITY & QUALITY RULES:
+1. CATEGORY DIVERSITY: Do NOT generate chunks that all follow the same pattern (e.g. avoid generating 6 chunks that all start with "take a..." or "have a..."). Balance across diverse categories:
+   - Strong Collocations: Verb + Noun ("run a warm bath", "set an alarm", "strike a deal"), Adj + Noun ("sound sleep", "tight schedule", "heavy traffic")
+   - Phrasal Verbs & Verb Phrases ("drift off", "freshen up", "fall behind", "catch up on")
+   - Prepositional & Adverbial Phrases ("in a hurry", "at the crack of dawn", "day in and day out")
+   - Conversational Gambits & Spoken Idioms ("call it a day", "if you ask me", "as a matter of fact")
+2. ANTI-REPETITION IN EXAMPLES:
+   - Each chunk's example sentence MUST depict a different realistic scene.
+   - Avoid monotonous "She/He..." openings. Use diverse subjects ("I", "we", "my coworkers", "travelers", "local students"), conditional sentences ("When you...", "If you..."), and natural dialogues.
+3. IDIOMATIC VIETNAMESE:
+   - Provide natural, fluent Vietnamese meanings that capture the real pragmatic nuance, not robotic word-for-word translations.
+4. SPECIFIC PHOTOGRAPHIC IMAGE QUERIES:
+   - Describe high-quality, realistic photography scenes with atmosphere and setting details instead of generic "person doing X". No quotes.
+5. GENERAL AMERICAN (US) IPA:
+   - Standard US IPA transcription enclosed in slashes.
+
+You MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
+
+  const topicContext = topic?.trim() ? `Lesson Theme / Topic: "${topic.trim()}"\n` : ''
+  const userPrompt = `Generate 6 to 12 diverse, authentic lexical chunks based on this lesson:
+${topicContext}
 Vocabulary words:
 ${words.slice(0, 40).join(', ')}
 
-${storyText ? `Context/Reading text:\n${storyText.slice(0, 1500)}` : ''}`
+${storyText ? `Context / Reading text from lesson:\n${storyText.slice(0, 1500)}` : ''}`
 
   let rawCards: z.infer<typeof StandaloneChunkSchema>[] = []
 

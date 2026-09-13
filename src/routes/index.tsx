@@ -727,6 +727,7 @@ function HomePage() {
         data: {
           words: candidateWords.slice(0, 30),
           storyText,
+          topic: lesson?.unitTitle || deckName,
           token,
         },
       })
@@ -851,10 +852,11 @@ function HomePage() {
     try {
       const token = getStoredToken()
       const phraseSet = new Set(selectedPhrases)
+      const topic = lesson?.unitTitle || deckName
 
       const promises: [Promise<any>, Promise<any>] = [
         totalVocabItems.length > 0
-          ? generateVocabulary({ data: { words: totalVocabItems, token } })
+          ? generateVocabulary({ data: { words: totalVocabItems, topic, token } })
           : Promise.resolve([]),
         selectedNotes.length > 0
           ? generateNotes({

@@ -65,12 +65,13 @@ export const generateVocabulary = createServerFn({ method: 'POST' })
   .validator(
     z.object({
       words: z.array(z.string().min(1).max(120)).min(1).max(150),
+      topic: z.string().optional(),
       token: z.string().optional(),
     }),
   )
   .handler(({ data }) => {
     assertAuthorized(data.token)
-    return enrichVocabulary(data.words)
+    return enrichVocabulary(data.words, data.topic)
   })
 
 export const generateNotes = createServerFn({ method: 'POST' })
@@ -98,12 +99,13 @@ export const generateChunks = createServerFn({ method: 'POST' })
     z.object({
       words: z.array(z.string().min(1).max(120)).min(1).max(100),
       storyText: z.string().optional(),
+      topic: z.string().optional(),
       token: z.string().optional(),
     }),
   )
   .handler(({ data }) => {
     assertAuthorized(data.token)
-    return generateLessonChunks(data.words, data.storyText)
+    return generateLessonChunks(data.words, data.storyText, data.topic)
   })
 
 
