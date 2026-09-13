@@ -14,7 +14,15 @@ function extensionFor(contentType: string | null, fallback: string) {
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
 
-export async function downloadMedia(url: string, fallbackExtension: string) {
+export async function downloadMedia(
+  url: string,
+  fallbackExtension: string,
+  timeoutMs: number = 6_000,
+) {
+  if (!url || !/^https?:\/\//i.test(url.trim())) {
+    throw new Error('Invalid media URL')
+  }
+
   const isAudio = fallbackExtension === 'mp3' || fallbackExtension === 'wav'
   const isImage = !isAudio
 
@@ -30,12 +38,14 @@ export async function downloadMedia(url: string, fallbackExtension: string) {
         ? 'https://www.bing.com/'
         : '',
     },
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
 
   if (!response.ok) throw new Error(`Media request failed (${response.status})`)
 
   const buffer = Buffer.from(await response.arrayBuffer())
+  if (!buffer.length) throw new Error('Empty media buffer received')
+
   return {
     buffer,
     extension: extensionFor(response.headers.get('content-type'), fallbackExtension),

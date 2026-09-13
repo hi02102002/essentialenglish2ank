@@ -129,10 +129,11 @@ const buildUnsignedVoiceUrl = (text: string, type: YoudaoDictVoiceType) =>
   `${UNSIGNED_BASE_URL}?${stringifyQuery({ audio: text, type })}`
 
 export const getYoudaoDictVoiceUrl = (
-  sentence: string,
+  sentence?: string | null,
   type: YoudaoDictVoiceType = 2,
   options?: GetYoudaoDictVoiceUrlOptions,
 ) => {
+  if (!sentence || typeof sentence !== 'string') return ''
   const text = sentence.trim()
   if (!text) return ''
 
@@ -148,6 +149,11 @@ export const getYoudaoDictVoiceUrl = (
 }
 
 export const getYoudaoUnsignedVoiceUrl = (
-  sentence: string,
+  sentence?: string | null,
   type: YoudaoDictVoiceType = 2,
-) => buildUnsignedVoiceUrl(sentence.trim(), type)
+) => {
+  if (!sentence || typeof sentence !== 'string') return ''
+  const text = sentence.trim()
+  if (!text) return ''
+  return buildUnsignedVoiceUrl(text, type)
+}

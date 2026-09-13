@@ -6,13 +6,87 @@ import { getBingImageUrl, getBingAlternativeUrl } from '@/lib/bing-image'
 import { getPosInfo } from '@/lib/pos'
 import { generateMaskedWord, formatSpacedMask } from '@/lib/masked-word'
 
-function getAnkiExporter(): new (deckName: string) => AnkiExport {
+function patchExporterPrototype(proto: any) {
+  if (!proto || proto._stmtFreePatched) return
+  proto._stmtFreePatched = true
+
+  proto._update = function (query: string, obj: any) {
+    const stmt = this.db.prepare(query)
+    try {
+      return stmt.getAsObject(obj)
+    } finally {
+      stmt.free()
+    }
+  }
+
+  proto._getId = function (table: string, col: string, ts: number) {
+    const query = `SELECT ${col} from ${table} WHERE ${col} >= :ts ORDER BY ${col} DESC LIMIT 1`
+    const stmt = this.db.prepare(query)
+    try {
+      const rowObj = stmt.getAsObject({ ':ts': ts })
+      return rowObj[col] ? +rowObj[col] + 1 : ts
+    } finally {
+      stmt.free()
+    }
+  }
+
+  proto._getNoteId = function (guid: string, ts: number) {
+    const query = `SELECT id from notes WHERE guid = :guid ORDER BY id DESC LIMIT 1`
+    const stmt = this.db.prepare(query)
+    try {
+      const rowObj = stmt.getAsObject({ ':guid': guid })
+      return rowObj.id || this._getId('notes', 'id', ts)
+    } finally {
+      stmt.free()
+    }
+  }
+
+  proto._getCardId = function (note_id: number, ts: number) {
+    const query = `SELECT id from cards WHERE nid = :note_id ORDER BY id DESC LIMIT 1`
+    const stmt = this.db.prepare(query)
+    try {
+      const rowObj = stmt.getAsObject({ ':note_id': note_id })
+      return rowObj.id || this._getId('cards', 'id', ts)
+    } finally {
+      stmt.free()
+    }
+  }
+}
+
+function getAnkiExporter(): any {
   const mod: any = AnkiExport
+  if (mod?.Exporter?.prototype) {
+    patchExporterPrototype(mod.Exporter.prototype)
+  }
+  if (mod?.prototype) {
+    patchExporterPrototype(mod.prototype)
+  }
+  if (mod?.default?.Exporter?.prototype) {
+    patchExporterPrototype(mod.default.Exporter.prototype)
+  }
+  if (mod?.default?.prototype) {
+    patchExporterPrototype(mod.default.prototype)
+  }
+
   if (typeof mod === 'function') return mod
   if (typeof mod?.default === 'function') return mod.default
   if (typeof mod?.default?.default === 'function') return mod.default.default
   if (typeof mod?.Exporter === 'function') return mod.Exporter
   return mod
+}
+
+function createAnkiDeck(deckName: string) {
+  const Exporter = getAnkiExporter()
+  let instance: any
+  try {
+    instance = new Exporter(deckName, { css: CARD_CSS })
+  } catch {
+    instance = Exporter(deckName, { css: CARD_CSS })
+  }
+  if (instance && Object.getPrototypeOf(instance)) {
+    patchExporterPrototype(Object.getPrototypeOf(instance))
+  }
+  return instance
 }
 
 function escapeHtml(value: string) {
@@ -602,97 +676,146 @@ body.night_mode .anki-chunk-meaning {
 }
 `
 
-async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: number) {
-  const base = safeBaseName(card.word, index)
-  let imageTag = ''
-  let wordAudioTag = ''
-  let exampleAudioTag = ''
+type DownloadedMedia = {
+  buffer: Buffer
+  extension: string
+}
 
-  const targetImageUrl = card.imageUrl || (card.imageQuery ? getBingImageUrl(card.imageQuery) : '')
-  if (targetImageUrl) {
-    try {
-      const image = await downloadMedia(targetImageUrl, 'jpg')
-      const filename = `${base}.${image.extension}`
-      apkg.addMedia(filename, image.buffer)
-      imageTag = `<img src="${filename}" alt="${escapeHtml(card.word)}" style="max-height:220px;max-width:100%;object-fit:cover;border-radius:8px">`
-    } catch {
-      // Fallback: If primary image URL failed (e.g. 404 or blocked), try fetching via Bing alternative or query
-      const fallbackUrl = card.imageQuery
-        ? targetImageUrl !== getBingAlternativeUrl(card.imageQuery)
-          ? getBingAlternativeUrl(card.imageQuery)
-          : getBingImageUrl(card.imageQuery)
-        : ''
+type MediaDownloader = (
+  url: string,
+  fallbackExtension: string,
+) => Promise<DownloadedMedia | null>
 
-      if (fallbackUrl) {
-        try {
-          const image = await downloadMedia(fallbackUrl, 'jpg')
-          const filename = `${base}.${image.extension}`
-          apkg.addMedia(filename, image.buffer)
-          imageTag = `<img src="${filename}" alt="${escapeHtml(card.word)}" style="max-height:220px;max-width:100%;object-fit:cover;border-radius:8px">`
-        } catch {
-          imageTag = ''
-        }
-      } else {
-        imageTag = ''
-      }
+function createMediaDownloader(): MediaDownloader {
+  const cache = new Map<string, Promise<DownloadedMedia | null>>()
+
+  return (url: string, fallbackExtension: string) => {
+    const trimmed = url?.trim()
+    if (!trimmed || !/^https?:\/\//i.test(trimmed)) {
+      return Promise.resolve(null)
     }
+
+    const cached = cache.get(trimmed)
+    if (cached) return cached
+
+    const promise = downloadMedia(trimmed, fallbackExtension)
+      .then((res) => res)
+      .catch(() => null)
+
+    cache.set(trimmed, promise)
+    return promise
   }
+}
+
+type PreparedMedia = {
+  filename: string
+  buffer: Buffer
+}
+
+type PreparedCard = {
+  front: string
+  back: string
+  tags: string[]
+  media: PreparedMedia[]
+}
+
+async function prepareVocabularyCard(
+  card: VocabularyCard,
+  index: number,
+  download: MediaDownloader,
+): Promise<PreparedCard> {
+  const word = card.word?.trim() || 'word'
+  const base = safeBaseName(word, index)
+  const mediaList: PreparedMedia[] = []
+
+  const targetImageUrl = card.imageUrl?.trim() || (card.imageQuery ? getBingImageUrl(card.imageQuery) : '')
+  const fallbackImageUrl = card.imageQuery
+    ? targetImageUrl !== getBingAlternativeUrl(card.imageQuery)
+      ? getBingAlternativeUrl(card.imageQuery)
+      : getBingImageUrl(card.imageQuery)
+    : ''
 
   const targetWordAudioUrl = card.wordAudioUrl
     ? card.wordAudioUrl.replace(/([?&]type=)1\b/, '$12')
-    : getYoudaoUnsignedVoiceUrl(card.word, 2)
+    : getYoudaoUnsignedVoiceUrl(word, 2)
 
-  try {
-    let audio
-    try {
-      audio = await downloadMedia(targetWordAudioUrl, 'mp3')
-    } catch {
-      audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.word, 2), 'mp3')
-    }
-    const filename = `${base}-word.${audio.extension}`
-    apkg.addMedia(filename, audio.buffer)
-    wordAudioTag = `[sound:${filename}]`
-  } catch {
-    wordAudioTag = ''
-  }
-
+  const exampleText = card.example?.trim() || ''
   const targetExampleAudioUrl = card.exampleAudioUrl
     ? card.exampleAudioUrl.replace(/([?&]type=)1\b/, '$12')
-    : getYoudaoUnsignedVoiceUrl(card.example, 2)
+    : (exampleText ? getYoudaoUnsignedVoiceUrl(exampleText, 2) : '')
 
-  try {
-    let audio
-    try {
-      audio = await downloadMedia(targetExampleAudioUrl, 'mp3')
-    } catch {
-      audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.example, 2), 'mp3')
-    }
-    const filename = `${base}-example.${audio.extension}`
-    apkg.addMedia(filename, audio.buffer)
+  const [imageRes, wordAudioRes, exampleAudioRes, chunkAudioResults] = await Promise.all([
+    (async () => {
+      if (!targetImageUrl) return null
+      let img = await download(targetImageUrl, 'jpg')
+      if (!img && fallbackImageUrl && fallbackImageUrl !== targetImageUrl) {
+        img = await download(fallbackImageUrl, 'jpg')
+      }
+      return img
+    })(),
+    (async () => {
+      if (!targetWordAudioUrl) return null
+      let audio = await download(targetWordAudioUrl, 'mp3')
+      if (!audio && word) {
+        audio = await download(getYoudaoUnsignedVoiceUrl(word, 2), 'mp3')
+      }
+      return audio
+    })(),
+    (async () => {
+      if (!targetExampleAudioUrl) return null
+      let audio = await download(targetExampleAudioUrl, 'mp3')
+      if (!audio && exampleText) {
+        audio = await download(getYoudaoUnsignedVoiceUrl(exampleText, 2), 'mp3')
+      }
+      return audio
+    })(),
+    Promise.all(
+      (card.chunks || []).map(async (chunk) => {
+        const text = chunk?.text?.trim()
+        if (!text) return null
+        const url = chunk.audioUrl
+          ? chunk.audioUrl.replace(/([?&]type=)1\b/, '$12')
+          : getYoudaoUnsignedVoiceUrl(text, 2)
+        if (!url) return null
+        let audio = await download(url, 'mp3')
+        if (!audio) {
+          audio = await download(getYoudaoUnsignedVoiceUrl(text, 2), 'mp3')
+        }
+        return audio
+      }),
+    ),
+  ])
+
+  let imageTag = ''
+  if (imageRes) {
+    const filename = `${base}.${imageRes.extension}`
+    mediaList.push({ filename, buffer: imageRes.buffer })
+    imageTag = `<img src="${filename}" alt="${escapeHtml(word)}" style="max-height:220px;max-width:100%;object-fit:cover;border-radius:8px">`
+  }
+
+  let wordAudioTag = ''
+  if (wordAudioRes) {
+    const filename = `${base}-word.${wordAudioRes.extension}`
+    mediaList.push({ filename, buffer: wordAudioRes.buffer })
+    wordAudioTag = `[sound:${filename}]`
+  }
+
+  let exampleAudioTag = ''
+  if (exampleAudioRes) {
+    const filename = `${base}-example.${exampleAudioRes.extension}`
+    mediaList.push({ filename, buffer: exampleAudioRes.buffer })
     exampleAudioTag = `[sound:${filename}]`
-  } catch {
-    exampleAudioTag = ''
   }
 
   const chunkAudioTags: string[] = []
-  if (Array.isArray(card.chunks) && card.chunks.length > 0) {
-    for (let cIdx = 0; cIdx < card.chunks.length; cIdx++) {
-      const chunk = card.chunks[cIdx]
-      if (chunk?.text) {
-        try {
-          const chunkTargetAudio = chunk.audioUrl
-            ? chunk.audioUrl.replace(/([?&]type=)1\b/, '$12')
-            : getYoudaoUnsignedVoiceUrl(chunk.text, 2)
-          const audio = await downloadMedia(chunkTargetAudio, 'mp3')
-          const filename = `${base}-chunk-${cIdx + 1}.${audio.extension}`
-          apkg.addMedia(filename, audio.buffer)
-          chunkAudioTags.push(`[sound:${filename}]`)
-        } catch {
-          chunkAudioTags.push('')
-        }
-      } else {
-        chunkAudioTags.push('')
-      }
+  for (let cIdx = 0; cIdx < chunkAudioResults.length; cIdx++) {
+    const cAudio = chunkAudioResults[cIdx]
+    if (cAudio) {
+      const filename = `${base}-chunk-${cIdx + 1}.${cAudio.extension}`
+      mediaList.push({ filename, buffer: cAudio.buffer })
+      chunkAudioTags.push(`[sound:${filename}]`)
+    } else {
+      chunkAudioTags.push('')
     }
   }
 
@@ -705,7 +828,7 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
           ${card.chunks
             .map(
               (c, idx) =>
-                `<li><span class="anki-chunk-text">${escapeHtml(c.text)}</span>${
+                `<li><span class="anki-chunk-text">${escapeHtml(c.text || '')}</span>${
                   chunkAudioTags[idx] ? ` <span class="anki-chunk-audio">${chunkAudioTags[idx]}</span>` : ''
                 }${
                   c.meaningVi ? ` <span class="anki-chunk-meaning">— ${escapeHtml(c.meaningVi)}</span>` : ''
@@ -716,11 +839,11 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
       </div>`
       : ''
 
-  const isPhrase = card.kind === 'phrase' || card.word.includes(' ')
+  const isPhrase = card.kind === 'phrase' || word.includes(' ')
   const posInfo = getPosInfo(card.partOfSpeech || (isPhrase ? 'phrase' : 'noun'))
   const badgeHtml = `<div class="anki-badge ${posInfo.ankiClass}">${escapeHtml(posInfo.labelVi)} • ${escapeHtml(posInfo.abbr)}</div>`
 
-  const maskedWord = card.maskedWord?.trim() || generateMaskedWord(card.word)
+  const maskedWord = card.maskedWord?.trim() || generateMaskedWord(word)
   const spacedMask = formatSpacedMask(maskedWord)
 
   const front = `
@@ -730,7 +853,7 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
       ${imageTag ? `<div class="anki-image-wrapper">${imageTag}</div>` : ''}
 
       <div class="anki-prompt-vn">
-        <b>🇻🇳 Nghĩa:</b> ${escapeHtml(card.vietnamese)}
+        <b>🇻🇳 Nghĩa:</b> ${escapeHtml(card.vietnamese || '')}
       </div>
 
       <div class="anki-cloze-pattern" title="Gợi ý ký tự">
@@ -756,7 +879,7 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
 
       <script>
         (function() {
-          var targetWord = ${JSON.stringify(card.word.trim())};
+          var targetWord = ${JSON.stringify(word)};
           var input = document.getElementById('anki-input');
           var feedback = document.getElementById('anki-feedback');
 
@@ -804,8 +927,8 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
       <div>
         ${badgeHtml}
         ${imageTag ? `<div class="anki-image-wrapper">${imageTag}</div>` : ''}
-        <div class="anki-word">${escapeHtml(card.word)}</div>
-        <div class="anki-ipa">${escapeHtml(card.ipa)} ${wordAudioTag}</div>
+        <div class="anki-word">${escapeHtml(word)}</div>
+        <div class="anki-ipa">${escapeHtml(card.ipa || '')} ${wordAudioTag}</div>
       </div>
 
       <div id="anki-back-typed-box" class="anki-back-typed-box" style="display:none">
@@ -814,18 +937,18 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
       </div>
 
       <div class="anki-box">
-        <div class="anki-vn"><b>🇻🇳</b> ${escapeHtml(card.vietnamese)}</div>
-        <div class="anki-en"><b>English:</b> ${escapeHtml(card.englishDefinition)}</div>
+        <div class="anki-vn"><b>🇻🇳</b> ${escapeHtml(card.vietnamese || '')}</div>
+        <div class="anki-en"><b>English:</b> ${escapeHtml(card.englishDefinition || '')}</div>
         ${card.hint ? `<div class="anki-hint"><b>💡 Textbook Note:</b> <i>${escapeHtml(card.hint)}</i></div>` : ''}
       </div>
       ${chunksHtml}
       <div class="anki-example-box">
-        <div class="anki-example-text"><i>${escapeHtml(card.example)}</i> ${exampleAudioTag}</div>
+        <div class="anki-example-text"><i>${escapeHtml(exampleText)}</i> ${exampleAudioTag}</div>
       </div>
 
       <script>
         (function() {
-          var targetWord = ${JSON.stringify(card.word.trim())};
+          var targetWord = ${JSON.stringify(word)};
           var box = document.getElementById('anki-back-typed-box');
           var valSpan = document.getElementById('anki-back-typed-val');
           try {
@@ -851,30 +974,36 @@ async function addVocabularyCard(apkg: AnkiExport, card: VocabularyCard, index: 
   const tags = ['vocabulary', tag]
   if (isPhrase) tags.push('phrases')
   if (posInfo.code && posInfo.code !== 'other') tags.push(`pos-${posInfo.code.replace(/\s+/g, '-')}`)
-  apkg.addCard(front, back, { tags })
+
+  return { front, back, tags, media: mediaList }
 }
 
-async function addNoteCard(apkg: AnkiExport, card: NoteCard, index: number) {
-  const base = safeBaseName(`note-${card.title}`, index)
+async function prepareNoteCard(
+  card: NoteCard,
+  index: number,
+  download: MediaDownloader,
+): Promise<PreparedCard> {
+  const title = card.title?.trim() || 'Note'
+  const base = safeBaseName(`note-${title}`, index)
+  const mediaList: PreparedMedia[] = []
   let exampleAudioTag = ''
 
-  if (card.example) {
+  const exampleText = card.example?.trim() || ''
+  if (exampleText) {
     const targetExampleAudioUrl = card.exampleAudioUrl
       ? card.exampleAudioUrl.replace(/([?&]type=)1\b/, '$12')
-      : getYoudaoUnsignedVoiceUrl(card.example, 2)
+      : getYoudaoUnsignedVoiceUrl(exampleText, 2)
 
-    try {
-      let audio
-      try {
-        audio = await downloadMedia(targetExampleAudioUrl, 'mp3')
-      } catch {
-        audio = await downloadMedia(getYoudaoUnsignedVoiceUrl(card.example, 2), 'mp3')
+    if (targetExampleAudioUrl) {
+      let audio = await download(targetExampleAudioUrl, 'mp3')
+      if (!audio) {
+        audio = await download(getYoudaoUnsignedVoiceUrl(exampleText, 2), 'mp3')
       }
-      const filename = `${base}-example.${audio.extension}`
-      apkg.addMedia(filename, audio.buffer)
-      exampleAudioTag = `[sound:${filename}]`
-    } catch {
-      exampleAudioTag = ''
+      if (audio) {
+        const filename = `${base}-example.${audio.extension}`
+        mediaList.push({ filename, buffer: audio.buffer })
+        exampleAudioTag = `[sound:${filename}]`
+      }
     }
   }
 
@@ -882,7 +1011,7 @@ async function addNoteCard(apkg: AnkiExport, card: NoteCard, index: number) {
     <style>${CARD_CSS}</style>
     <div class="anki-container" style="padding:24px 14px">
       <div class="anki-badge anki-badge-note">LANGUAGE NOTE</div>
-      <div class="anki-word" style="font-size:26px">${escapeHtml(card.title)}</div>
+      <div class="anki-word" style="font-size:26px">${escapeHtml(title)}</div>
       <div class="anki-ipa" style="margin-top:10px">Key phrases &amp; usage rules</div>
     </div>`
 
@@ -890,14 +1019,14 @@ async function addNoteCard(apkg: AnkiExport, card: NoteCard, index: number) {
     <style>${CARD_CSS}</style>
     <div class="anki-container">
       <div class="anki-badge anki-badge-note">LANGUAGE NOTE</div>
-      <div class="anki-word" style="font-size:24px;margin-bottom:14px">${escapeHtml(card.title)}</div>
+      <div class="anki-word" style="font-size:24px;margin-bottom:14px">${escapeHtml(title)}</div>
       
       <div class="anki-box">
         <div style="font-size:12px;font-weight:700;color:var(--anki-muted,#64748b);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">
           Important phrases &amp; expressions:
         </div>
         <ul style="margin:0;padding-left:22px;color:var(--anki-box-text,#0f172a)">
-          ${card.content.map((item) => `<li style="margin-bottom:6px">${escapeHtml(item)}</li>`).join('')}
+          ${(card.content || []).map((item) => `<li style="margin-bottom:6px">${escapeHtml(item)}</li>`).join('')}
         </ul>
       </div>
 
@@ -911,32 +1040,57 @@ async function addNoteCard(apkg: AnkiExport, card: NoteCard, index: number) {
       }
 
       ${
-        card.example
+    exampleText
           ? `
       <div class="anki-example-box">
         <div style="font-size:12px;font-weight:700;color:var(--anki-example-border,#3b82f6);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">
           Example in context:
         </div>
-        <div class="anki-example-text"><i>${escapeHtml(card.example)}</i> ${exampleAudioTag}</div>
+        <div class="anki-example-text"><i>${escapeHtml(exampleText)}</i> ${exampleAudioTag}</div>
       </div>`
           : ''
       }
     </div>`
 
   const tag = card.unitNumber ? `unit-${String(card.unitNumber).padStart(2, '0')}` : 'notes'
-  apkg.addCard(front, back, { tags: ['language-notes', tag] })
+  return {
+    front,
+    back,
+    tags: ['language-notes', tag],
+    media: mediaList,
+  }
 }
 
 export async function buildApkg(deckName: string, cards: AnyAnkiCard[]) {
-  const Exporter = getAnkiExporter()
-  const apkg = new (Exporter as any)(deckName, { css: CARD_CSS })
-  for (const [index, card] of cards.entries()) {
-    if (card.type === 'note') {
-      await addNoteCard(apkg, card, index)
-    } else {
-      await addVocabularyCard(apkg, card, index)
+  const download = createMediaDownloader()
+  const CONCURRENCY = 10
+
+  const preparedCards: PreparedCard[] = new Array(cards.length)
+  let nextIndex = 0
+
+  const workers = Array.from({ length: Math.min(cards.length, CONCURRENCY) }, async () => {
+    while (nextIndex < cards.length) {
+      const idx = nextIndex++
+      const card = cards[idx]
+      if (card.type === 'note') {
+        preparedCards[idx] = await prepareNoteCard(card, idx, download)
+      } else {
+        preparedCards[idx] = await prepareVocabularyCard(card, idx, download)
+      }
     }
+  })
+
+  await Promise.all(workers)
+
+  const apkg = createAnkiDeck(deckName)
+  for (const prepared of preparedCards) {
+    if (!prepared) continue
+    for (const m of prepared.media) {
+      apkg.addMedia(m.filename, m.buffer)
+    }
+    apkg.addCard(prepared.front, prepared.back, { tags: prepared.tags })
   }
+
   return apkg.save()
 }
 

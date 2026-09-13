@@ -30,7 +30,7 @@ const vocabCardSchema = z.object({
         partOfSpeech: z.string().optional().default('phrase'),
         audioUrl: z.string().optional().default(''),
         exampleAudioUrl: z.string().optional().default(''),
-      }),
+      }).passthrough(),
     )
     .optional()
     .default([]),
@@ -39,7 +39,7 @@ const vocabCardSchema = z.object({
   wordAudioUrl: z.string().optional().default(''),
   exampleAudioUrl: z.string().optional().default(''),
   sourceUrl: z.string().optional().default(''),
-})
+}).passthrough()
 
 const noteCardSchema = z.object({
   type: z.literal('note'),
@@ -52,15 +52,15 @@ const noteCardSchema = z.object({
   example: z.string().optional().default(''),
   exampleAudioUrl: z.string().optional().default(''),
   sourceUrl: z.string().optional().default(''),
-})
+}).passthrough()
 
 const cardSchema = z.union([noteCardSchema, vocabCardSchema])
 
 const payloadSchema = z.object({
-  deckName: z.string().min(1).max(120),
-  cards: z.array(cardSchema).min(1).max(200),
+  deckName: z.string().min(1).max(200),
+  cards: z.array(cardSchema).min(1).max(1000),
   token: z.string().optional(),
-})
+}).passthrough()
 
 function filenameFor(deckName: string) {
   const safe = deckName
@@ -90,16 +90,27 @@ export const Route = createFileRoute('/api/export')({
           if (!cards.length) return new Response('No selected cards', { status: 400 })
 
           const output = await buildApkg(payload.deckName, cards)
-          return new Response(output as BodyInit, {
+          const binaryData = new Uint8Array(output as any)
+
+          return new Response(binaryData, {
             headers: {
               'content-type': 'application/octet-stream',
               'content-disposition': `attachment; filename="${filenameFor(payload.deckName)}"`,
               'cache-control': 'no-store',
             },
           })
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Export failed'
-          const is401 = message.includes('401')
+        } catch (error: any) {
+          console.error('[Export API Error]:', error)
+          let message = 'Export failed'
+          if (error instanceof z.ZodError) {
+            message = error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')
+          } else if (error?.message) {
+            message = error.message
+          } else if (typeof error === 'string') {
+            message = error
+          }
+
+          const is401 = message.includes('401') || message.toLowerCase().includes('unauthorized')
           return Response.json(
             { error: message },
             { status: is401 ? 401 : 400 },
