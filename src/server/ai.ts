@@ -88,13 +88,20 @@ async function enrichVocabularyBatch(
   adapter: any,
   systemPrompt: string,
   topic?: string,
+  phrases?: string[],
 ): Promise<GeneratedVocabulary[]> {
   const topicContext = topic?.trim() ? `\nLesson Theme / Context: "${topic.trim()}"\n` : ''
-  const userPrompt = `Create rich, engaging flashcards for the following items preserving exact item order.${topicContext}
+  const phrasesContext =
+    phrases && phrases.length > 0
+      ? `\nKey Lesson Collocations & Phrases to integrate:\n${phrases.slice(0, 40).join(', ')}\n`
+      : ''
+  const userPrompt = `Create rich, engaging flashcards for the following items preserving exact item order.${topicContext}${phrasesContext}
 MANDATORY DIVERSITY & ANTI-REPETITION RULES:
 1. SCENARIO & SUBJECT VARIETY: Each card in this batch MUST feature a completely distinct, relatable scenario and subject. Do NOT repeat sentence openers. Do NOT start consecutive sentences with "She" or "He". Use a rich mix of subjects (e.g. "I", "we", "my roommate", "commuters", "the flight attendant", "local residents", "the barista", "the doctor", "travelers").
 2. SENTENCE STRUCTURE VARIETY: Avoid formulaic patterns like "[Subject] [verb]ed [object] because [reason]". Use diverse structures (temporal openers: "On busy weekday mornings...", conditional clauses: "If you want to...", dialogue quotes: "'Don't forget to...', she reminded me", compound sentences with coordinating conjunctions).
-3. LEXICAL CHUNKS CONTRAST: The 1 to 2 lexical chunks for each word MUST be distinct in type and function. NEVER provide redundant pairs like "take a bath" and "have a bath". Instead, pick 1 strong collocation (e.g. "run a warm bath") and 1 conversational expression, phrasal verb, or idiom (e.g. "soak in the tub").
+3. LEXICAL CHUNKS INTEGRATION & CONTRAST:
+   - For each word, check if any phrase from the "Key Lesson Collocations & Phrases" above naturally uses or collocates with this word. If so, PRIORITIZE selecting it as a chunk for this word and generate its accurate US IPA, Vietnamese meaning, English definition, and example sentence.
+   - The 1 to 2 lexical chunks for each word MUST be distinct in type and function. NEVER provide redundant pairs like "take a bath" and "have a bath". Instead, pick 1 strong collocation (e.g. "run a warm bath") and 1 conversational expression, phrasal verb, or idiom (e.g. "soak in the tub").
 4. VIVID PHOTOGRAPHIC IMAGE QUERIES: Describe clear, high-resolution, atmospheric photography scenes suitable for image search (e.g. "steaming ceramic coffee mug on rustic wooden table morning sunlight photography"). Avoid generic "person doing X".
 
 Items to process:
@@ -193,6 +200,7 @@ ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
 export async function enrichVocabulary(
   words: string[],
   topic?: string,
+  phrases?: string[],
 ): Promise<GeneratedVocabulary[]> {
   if (!words.length) return []
 
@@ -263,7 +271,7 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"wo
 
   const results = await pMap(
     batches,
-    (batch) => enrichVocabularyBatch(batch, adapter, systemPrompt, topic),
+    (batch) => enrichVocabularyBatch(batch, adapter, systemPrompt, topic, phrases),
     2,
   )
 

@@ -96,6 +96,61 @@ function parseCustomWords(text: string): string[] {
   )
 }
 
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function stemWord(w: string): string {
+  return w
+    .toLowerCase()
+    .trim()
+    .replace(/(?:ing|ies|es|ed|s)$/i, '')
+}
+
+function phraseContainsWord(phrase: string, word: string): boolean {
+  const pLower = phrase.toLowerCase().trim()
+  const wLower = word.toLowerCase().trim()
+  if (pLower === wLower) return true
+
+  // Match whole word with possible regular inflection (s, es, ed, ing)
+  const regexExact = new RegExp(`\\b${escapeRegExp(wLower)}(?:s|es|ed|ing)?\\b`, 'i')
+  if (regexExact.test(pLower)) return true
+
+  // Match stem if stem length >= 3
+  const wStem = stemWord(wLower)
+  if (wStem.length >= 3) {
+    const regexStem = new RegExp(`\\b${escapeRegExp(wStem)}[a-z]*\\b`, 'i')
+    if (regexStem.test(pLower)) return true
+  }
+  return false
+}
+
+function findMatchingWordForPhrase(phrase: string, candidateWords: string[]): string | undefined {
+  if (!phrase || !candidateWords.length) return undefined
+  const pClean = phrase
+    .toLowerCase()
+    .replace(/^(?:to\s+(?:be\s+)?|a\s+|an\s+|the\s+|as\s+)/, '')
+    .trim()
+
+  // 1. If phrase begins with one of candidate words or their stem (e.g. "shake hands with..." -> "shake")
+  const firstWord = pClean.split(/\s+/)[0]
+  for (const w of candidateWords) {
+    const wLower = w.toLowerCase()
+    if (wLower === firstWord || stemWord(wLower) === stemWord(firstWord)) {
+      return w
+    }
+  }
+
+  // 2. Check candidate words in candidateWords that match inside the phrase
+  for (const w of candidateWords) {
+    if (phraseContainsWord(phrase, w)) {
+      return w
+    }
+  }
+
+  return undefined
+}
+
 function VocabularyImageEditor({
   card,
   realIndex,
@@ -432,6 +487,9 @@ function HomePage() {
   const [allNotes, setAllNotes] = useState<ExtractedNote[]>([])
   const [checkedNotes, setCheckedNotes] = useState<Record<string, boolean>>({})
 
+  // Merge Phrases & Chunks Mode (Default true: merges collocations & chunks into word cards)
+  const [mergePhrasesIntoCards, setMergePhrasesIntoCards] = useState(true)
+
   // Generated Cards State
   const [cards, setCards] = useState<AnyAnkiCard[]>([])
   const [cardFilterType, setCardFilterType] = useState<string>('all')
@@ -523,6 +581,37 @@ function HomePage() {
     () => allNotes.filter((n) => checkedNotes[n.id] !== false),
     [allNotes, checkedNotes],
   )
+
+  const matchedWordMap = useMemo(() => {
+    const map: Record<string, string | undefined> = {}
+    for (const phrase of allPhrases) {
+      map[phrase] = findMatchingWordForPhrase(phrase, selectedWords)
+    }
+    return map
+  }, [allPhrases, selectedWords])
+
+  const mergedPhrasesCount = useMemo(
+    () => selectedPhrases.filter((p) => Boolean(matchedWordMap[p])).length,
+    [selectedPhrases, matchedWordMap],
+  )
+
+  const standalonePhrasesCount = useMemo(
+    () => selectedPhrases.filter((p) => !matchedWordMap[p]).length,
+    [selectedPhrases, matchedWordMap],
+  )
+
+  const estimatedCardCount = useMemo(() => {
+    if (mergePhrasesIntoCards) {
+      return selectedWords.length + standalonePhrasesCount + selectedNotes.length
+    }
+    return selectedWords.length + selectedPhrases.length + selectedNotes.length
+  }, [
+    mergePhrasesIntoCards,
+    selectedWords.length,
+    standalonePhrasesCount,
+    selectedPhrases.length,
+    selectedNotes.length,
+  ])
 
   const filteredWords = useMemo(() => {
     if (!wordFilter.trim()) return allWords
@@ -840,7 +929,26 @@ function HomePage() {
   }
 
   async function onGenerateCards() {
-    const rawVocabItems = [...selectedWords, ...selectedPhrases]
+    // 1. Phân loại cụm từ: Cụm từ được gộp vào từ vựng gốc vs Cụm từ đứng riêng độc lập
+    const matchedPhrasesByWord: Record<string, string[]> = {}
+    const orphanPhrases: string[] = []
+
+    if (mergePhrasesIntoCards) {
+      for (const phrase of selectedPhrases) {
+        const mWord = findMatchingWordForPhrase(phrase, selectedWords)
+        if (mWord) {
+          if (!matchedPhrasesByWord[mWord]) matchedPhrasesByWord[mWord] = []
+          matchedPhrasesByWord[mWord].push(phrase)
+        } else {
+          orphanPhrases.push(phrase)
+        }
+      }
+    }
+
+    const rawVocabItems = mergePhrasesIntoCards
+      ? [...selectedWords, ...orphanPhrases]
+      : [...selectedWords, ...selectedPhrases]
+
     const cleanedVocabItems = Array.from(
       new Set(
         rawVocabItems
@@ -858,8 +966,12 @@ function HomePage() {
       return
     }
     setError('')
+    const mergedCount = selectedPhrases.length - orphanPhrases.length
     setStatus(
-      `Đang dùng TanStack AI tạo thẻ cho ${cleanedVocabItems.length} từ vựng/cụm từ và ${selectedNotes.length} ghi chú…`,
+      `Đang dùng TanStack AI tạo thẻ cho ${cleanedVocabItems.length} từ vựng${mergePhrasesIntoCards && mergedCount > 0
+        ? ` (gộp ${mergedCount} cụm từ/chunks vào cùng thẻ)`
+        : ''
+      } và ${selectedNotes.length} ghi chú…`,
     )
     setIsGenerating(true)
 
@@ -884,7 +996,12 @@ function HomePage() {
           `Đang dùng TanStack AI tạo thẻ từ vựng: ${fromNum}–${toNum} / ${cleanedVocabItems.length} (${Math.round((fromNum / cleanedVocabItems.length) * 100)}%)…`,
         )
         const batchResult = await generateVocabulary({
-          data: { words: batch, topic, token },
+          data: {
+            words: batch,
+            topic,
+            phrases: selectedPhrases,
+            token,
+          },
         })
         if (Array.isArray(batchResult)) {
           allGeneratedVocab.push(...batchResult)
@@ -963,6 +1080,34 @@ function HomePage() {
           }
         })
 
+        // Khi bật mergePhrasesIntoCards: Tự động gộp các cụm từ bài học liên kết với từ vựng này vào chunks
+        if (mergePhrasesIntoCards && matchedPhrasesByWord[item.word]) {
+          const existingChunkTexts = new Set(chunks.map((c) => c.text.toLowerCase()))
+          for (const mp of matchedPhrasesByWord[item.word]) {
+            const mpLower = mp.toLowerCase()
+            const alreadyPresent = Array.from(existingChunkTexts).some(
+              (t) => t === mpLower || t.includes(mpLower) || mpLower.includes(t),
+            )
+            if (!alreadyPresent) {
+              const mpHint = phraseHints[mp]
+              const mpImg = itemImages[mp]
+              chunks.push({
+                text: mp,
+                ipa: '',
+                meaningVi: mpHint || item.vietnamese,
+                englishDefinition: `Common collocation related to "${item.word}".`,
+                example: '',
+                imageQuery: mp,
+                imageUrl: mpImg || getBingImageUrl(mp),
+                partOfSpeech: 'phrase',
+                audioUrl: getYoudaoDictVoiceUrl(mp, 2),
+                exampleAudioUrl: '',
+              })
+              existingChunkTexts.add(mpLower)
+            }
+          }
+        }
+
         const mainWordLower = item.word.toLowerCase()
         createdWordSet.add(mainWordLower)
 
@@ -984,44 +1129,46 @@ function HomePage() {
           sourceUrl: lesson?.sourceUrl ?? 'custom-input',
         })
 
-        // 2. Tách Chunks thành các thẻ độc lập hoàn chỉnh: IPA, nghĩa, ví dụ, audio US, ảnh minh họa
-        for (const [cIdx, chunk] of chunks.entries()) {
-          const chunkText = chunk.text?.trim()
-          if (!chunkText) continue
-          const chunkLower = chunkText.toLowerCase()
-          if (createdWordSet.has(chunkLower)) continue
-          createdWordSet.add(chunkLower)
+        // 2. Tách Chunks thành các thẻ độc lập: CHỈ KHI mergePhrasesIntoCards bị tắt (false)
+        if (!mergePhrasesIntoCards) {
+          for (const [cIdx, chunk] of chunks.entries()) {
+            const chunkText = chunk.text?.trim()
+            if (!chunkText) continue
+            const chunkLower = chunkText.toLowerCase()
+            if (createdWordSet.has(chunkLower)) continue
+            createdWordSet.add(chunkLower)
 
-          const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(chunkText, 2)
-          const exampleText = chunk.example || item.example || ''
-          const chunkExampleAudio =
-            chunk.exampleAudioUrl ||
-            (exampleText ? getYoudaoDictVoiceUrl(exampleText, 2) : '')
-          const chunkQuery = chunk.imageQuery || chunkText
-          const chunkImg = chunk.imageUrl || getBingImageUrl(chunkQuery)
+            const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(chunkText, 2)
+            const exampleText = chunk.example || item.example || ''
+            const chunkExampleAudio =
+              chunk.exampleAudioUrl ||
+              (exampleText ? getYoudaoDictVoiceUrl(exampleText, 2) : '')
+            const chunkQuery = chunk.imageQuery || chunkText
+            const chunkImg = chunk.imageUrl || getBingImageUrl(chunkQuery)
 
-          vocabCards.push({
-            type: 'vocabulary',
-            id: `vocab-chunk-${Date.now()}-${index}-${cIdx}`,
-            selected: true,
-            unitNumber: lesson?.unitNumber,
-            kind: 'phrase',
-            partOfSpeech: chunk.partOfSpeech || 'phrase',
-            word: chunkText,
-            maskedWord: generateMaskedWord(chunkText),
-            ipa: chunk.ipa || '',
-            vietnamese: chunk.meaningVi || item.vietnamese,
-            englishDefinition:
-              chunk.englishDefinition ||
-              `Common lexical chunk related to "${item.word}".`,
-            example: exampleText,
-            imageQuery: chunkQuery,
-            imageUrl: chunkImg,
-            wordAudioUrl: chunkAudio,
-            exampleAudioUrl: chunkExampleAudio,
-            sourceUrl: lesson?.sourceUrl ?? 'custom-input',
-            hint: `Lexical Chunk đi liền với "${item.word}"`,
-          })
+            vocabCards.push({
+              type: 'vocabulary',
+              id: `vocab-chunk-${Date.now()}-${index}-${cIdx}`,
+              selected: true,
+              unitNumber: lesson?.unitNumber,
+              kind: 'phrase',
+              partOfSpeech: chunk.partOfSpeech || 'phrase',
+              word: chunkText,
+              maskedWord: generateMaskedWord(chunkText),
+              ipa: chunk.ipa || '',
+              vietnamese: chunk.meaningVi || item.vietnamese,
+              englishDefinition:
+                chunk.englishDefinition ||
+                `Common lexical chunk related to "${item.word}".`,
+              example: exampleText,
+              imageQuery: chunkQuery,
+              imageUrl: chunkImg,
+              wordAudioUrl: chunkAudio,
+              exampleAudioUrl: chunkExampleAudio,
+              sourceUrl: lesson?.sourceUrl ?? 'custom-input',
+              hint: `Lexical Chunk đi liền với "${item.word}"`,
+            })
+          }
         }
       }
 
@@ -1049,9 +1196,14 @@ function HomePage() {
       const nextCards: AnyAnkiCard[] = [...vocabCards, ...noteCards]
       setCards(nextCards)
       const wordCount = vocabCards.filter((c) => c.kind === 'word').length
-      const chunkCount = vocabCards.filter((c) => c.kind === 'phrase').length
+      const phraseCount = vocabCards.filter((c) => c.kind === 'phrase').length
+      const integratedChunks = vocabCards.reduce(
+        (acc, c) => acc + (c.chunks?.length || 0),
+        0,
+      )
       setStatus(
-        `Đã tạo thành công ${nextCards.length} thẻ (${wordCount} từ vựng, ${chunkCount} cụm từ/chunks kèm ảnh & âm thanh US, ${noteCards.length} ghi chú).`,
+        `Đã tạo thành công ${nextCards.length} thẻ (${wordCount} từ vựng${phraseCount > 0 ? `, ${phraseCount} cụm từ độc lập` : ''
+        }, tích hợp ${integratedChunks} cụm từ/chunks vào mặt sau thẻ kèm phát âm US, ${noteCards.length} ghi chú).`,
       )
       setStep(3)
     } catch (err) {
@@ -1844,10 +1996,31 @@ function HomePage() {
                     )}
                   </div>
                 </div>
+
+                <div className="flex items-center justify-between gap-2 flex-wrap pt-1.5">
+                  <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold p-1.5 px-2.5 rounded-lg border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/15 transition-colors">
+                    <Checkbox
+                      checked={mergePhrasesIntoCards}
+                      onCheckedChange={(c) => setMergePhrasesIntoCards(Boolean(c))}
+                    />
+                    <span className="text-foreground">
+                      Gộp cụm từ &amp; AI Chunks vào thẻ từ vựng tương ứng (Khuyên dùng - học gọn nhẹ)
+                    </span>
+                  </label>
+                </div>
+
                 <CardDescription className="text-xs">
-                  Mỗi cụm từ/thành ngữ/chunks dưới đây sẽ được tạo thành{' '}
-                  <strong className="text-foreground">1 thẻ từ vựng Anki độc lập</strong>{' '}
-                  (có phiên âm, dịch nghĩa tiếng Việt, định nghĩa tiếng Anh, câu ví dụ và âm thanh riêng).
+                  {mergePhrasesIntoCards ? (
+                    <span>
+                      ✨ <strong className="text-foreground">Chế độ gộp đã bật:</strong> Các cụm từ được chọn sẽ được tích hợp trực tiếp vào mặt sau của thẻ từ vựng chính kèm phát âm US &amp; nghĩa tiếng Việt (không tạo thẻ rời rạc). Những cụm từ đứng độc lập không liên quan đến từ vựng nào mới tạo thẻ riêng.
+                    </span>
+                  ) : (
+                    <span>
+                        Mỗi cụm từ/thành ngữ/chunks dưới đây sẽ được tạo thành{' '}
+                        <strong className="text-foreground">1 thẻ từ vựng Anki độc lập</strong>{' '}
+                        (có phiên âm, dịch nghĩa tiếng Việt, định nghĩa tiếng Anh, câu ví dụ và âm thanh riêng).
+                    </span>
+                  )}
                 </CardDescription>
               </CardHeader>
 
@@ -1903,6 +2076,7 @@ function HomePage() {
                     const isChecked = checkedPhrases[phrase] !== false
                     const hint = phraseHints[phrase]
                     const hasOriginalImage = Boolean(itemImages[phrase])
+                    const targetWord = matchedWordMap[phrase]
 
                     return (
                       <label
@@ -1928,6 +2102,25 @@ function HomePage() {
                             <span className="font-semibold text-sm font-mono text-foreground">
                               {phrase}
                             </span>
+                            {mergePhrasesIntoCards && (
+                              targetWord ? (
+                                <Badge
+                                  variant="secondary"
+                                  className="text-[0.65rem] px-1.5 py-0 h-4 bg-purple-500/15 text-purple-600 dark:text-purple-300 border-purple-500/30 font-medium"
+                                  title={`Cụm từ này sẽ được gộp vào mặt sau của thẻ "${targetWord}"`}
+                                >
+                                  📎 Gộp vào: {targetWord}
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="secondary"
+                                  className="text-[0.65rem] px-1.5 py-0 h-4 bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-500/30 font-medium"
+                                  title="Không thuộc từ vựng nào đã chọn, sẽ tạo thành 1 thẻ độc lập"
+                                >
+                                  📇 Thẻ riêng
+                                </Badge>
+                              )
+                            )}
                             {hasOriginalImage && (
                               <Badge
                                 variant="secondary"
@@ -2059,11 +2252,17 @@ function HomePage() {
           )}
 
           {/* Bottom Action Footer */}
-          <div className="flex flex-col-reverse sm:flex-row justify-between gap-3 pt-2">
+          <div className="flex flex-col-reverse sm:flex-row justify-between items-center gap-3 pt-2">
             <Button variant="ghost" onClick={() => setStep(1)} className="gap-2">
               <ArrowLeftIcon className="size-4" aria-hidden="true" />
               Quay lại Bước 1
             </Button>
+
+            {mergePhrasesIntoCards && mergedPhrasesCount > 0 && (
+              <span className="text-xs text-purple-600 dark:text-purple-400 font-medium">
+                ✨ Đã gộp {mergedPhrasesCount} cụm từ vào thẻ từ vựng tương ứng
+              </span>
+            )}
 
             <Button
               onClick={onGenerateCards}
@@ -2073,17 +2272,19 @@ function HomePage() {
                 selectedPhrases.length === 0 &&
                 selectedNotes.length === 0
               }
-              className="gap-2 font-semibold shadow-md"
+              className="gap-2 font-semibold shadow-md w-full sm:w-auto"
             >
               <SparklesIcon className="size-4" aria-hidden="true" />
               Tạo Anki Deck (
-              {[
-                selectedWords.length > 0 ? `${selectedWords.length} từ vựng` : '',
-                selectedPhrases.length > 0 ? `${selectedPhrases.length} cụm từ` : '',
-                selectedNotes.length > 0 ? `${selectedNotes.length} ghi chú` : '',
-              ]
-                .filter(Boolean)
-                .join(', ') || 'Chưa chọn nội dung'}
+              {mergePhrasesIntoCards
+                ? `~${estimatedCardCount} thẻ dự kiến`
+                : [
+                  selectedWords.length > 0 ? `${selectedWords.length} từ vựng` : '',
+                  selectedPhrases.length > 0 ? `${selectedPhrases.length} cụm từ` : '',
+                  selectedNotes.length > 0 ? `${selectedNotes.length} ghi chú` : '',
+                ]
+                  .filter(Boolean)
+                  .join(', ') || 'Chưa chọn nội dung'}
               )
               <ArrowRightIcon className="size-4" aria-hidden="true" />
             </Button>

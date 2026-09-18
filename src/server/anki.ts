@@ -831,7 +831,10 @@ async function prepareVocabularyCard(
                 `<li><span class="anki-chunk-text">${escapeHtml(c.text || '')}</span>${
                   chunkAudioTags[idx] ? ` <span class="anki-chunk-audio">${chunkAudioTags[idx]}</span>` : ''
                 }${
+                c.ipa ? ` <span class="anki-chunk-ipa" style="color:var(--anki-muted,#64748b);font-size:12px;font-family:ui-monospace,monospace;">${escapeHtml(c.ipa)}</span>` : ''
+                }${
                   c.meaningVi ? ` <span class="anki-chunk-meaning">— ${escapeHtml(c.meaningVi)}</span>` : ''
+                }${c.example ? `<div style="font-size:12px;color:var(--anki-muted,#64748b);font-style:italic;margin-top:2px;padding-left:4px;">${escapeHtml(c.example)}</div>` : ''
                 }</li>`,
             )
             .join('')}

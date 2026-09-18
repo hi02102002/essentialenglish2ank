@@ -66,12 +66,13 @@ export const generateVocabulary = createServerFn({ method: 'POST' })
     z.object({
       words: z.array(z.string().min(1).max(300)).min(1).max(500),
       topic: z.string().optional(),
+      phrases: z.array(z.string().min(1).max(300)).optional(),
       token: z.string().optional(),
     }),
   )
   .handler(async ({ data }) => {
     assertAuthorized(data.token)
-    const result = await enrichVocabulary(data.words, data.topic)
+    const result = await enrichVocabulary(data.words, data.topic, data.phrases)
     return result || []
   })
 
