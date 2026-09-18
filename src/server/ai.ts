@@ -108,44 +108,68 @@ Items to process:
 ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
 
   let rawCards: z.infer<typeof FlashcardSchema>[] = []
+  let lastErr: any = null
+  const MAX_RETRIES = 2
 
-  try {
-    const textOutput = await chat({
-      adapter,
-      systemPrompts: [systemPrompt],
-      messages: [{ role: 'user', content: userPrompt }],
-      stream: false,
-    })
-    const cleaned = extractJson(textOutput)
-    const parsed = JSON.parse(cleaned)
-    if (Array.isArray(parsed)) {
-      rawCards = parsed
-    } else if (Array.isArray(parsed?.cards)) {
-      rawCards = parsed.cards
-    } else {
-      const validated = FlashcardsOutputSchema.safeParse(parsed)
-      if (validated.success) {
-        rawCards = validated.data.cards
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+    try {
+      const textOutput = await chat({
+        adapter,
+        systemPrompts: [systemPrompt],
+        messages: [{ role: 'user', content: userPrompt }],
+        stream: false,
+      })
+      const cleaned = extractJson(textOutput)
+      const parsed = JSON.parse(cleaned)
+      if (Array.isArray(parsed)) {
+        rawCards = parsed
+      } else if (Array.isArray(parsed?.cards)) {
+        rawCards = parsed.cards
+      } else {
+        const validated = FlashcardsOutputSchema.safeParse(parsed)
+        if (validated.success) {
+          rawCards = validated.data.cards
+        }
       }
+      lastErr = null
+      break
+    } catch (err: any) {
+      lastErr = err
+      const isRetryable =
+        err?.status === 502 ||
+        err?.status === 503 ||
+        err?.status === 504 ||
+        err?.message?.includes('502') ||
+        err?.message?.includes('timed out') ||
+        err?.message?.includes('timeout') ||
+        err?.message?.includes('429')
+
+      if (isRetryable && attempt <= MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt))
+        continue
+      }
+      break
     }
-  } catch (err: any) {
-    if (err?.status === 401 || err?.message?.includes('401')) {
+  }
+
+  if (lastErr) {
+    if (lastErr?.status === 401 || lastErr?.message?.includes('401')) {
       throw new Error(
-        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${err?.message || err}`,
+        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${lastErr?.message || lastErr}`,
       )
     }
-    if (err?.status === 405 || err?.message?.includes('405')) {
+    if (lastErr?.status === 405 || lastErr?.message?.includes('405')) {
       throw new Error(
-        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${err?.message || err}`,
+        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${lastErr?.message || lastErr}`,
       )
     }
-    if (err?.status === 502 || err?.message?.includes('502')) {
+    if (lastErr?.status === 502 || lastErr?.message?.includes('502')) {
       throw new Error(
-        `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
+        `Máy chủ Proxy OpenAI trả về lỗi 502 Bad Gateway (Upstream timeout / 403). Gợi ý: Hãy đổi OPENAI_MODEL=gpt-5-6-mini trong file .env để máy chủ proxy phản hồi nhanh trong 5-10s thay vì bị timeout 30s. Chi tiết: ${lastErr?.message || lastErr}`,
       )
     }
     throw new Error(
-      `Failed to generate vocabulary using TanStack AI: ${err?.message || err}`,
+      `Failed to generate vocabulary using TanStack AI: ${lastErr?.message || lastErr}`,
     )
   }
 

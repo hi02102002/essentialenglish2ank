@@ -980,8 +980,8 @@ function HomePage() {
       const phraseSet = new Set(selectedPhrases)
       const topic = lesson?.unitTitle || deckName
 
-      // Client-side batching to prevent Cloudflare/proxy timeouts (100s limit)
-      const CLIENT_BATCH_SIZE = 6
+      // Client-side batching to prevent proxy timeouts (proxy has strict 30s curl cutoff)
+      const CLIENT_BATCH_SIZE = 4
       const vocabBatches: string[][] = []
       for (let i = 0; i < cleanedVocabItems.length; i += CLIENT_BATCH_SIZE) {
         vocabBatches.push(cleanedVocabItems.slice(i, i + CLIENT_BATCH_SIZE))
