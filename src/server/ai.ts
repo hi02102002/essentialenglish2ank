@@ -4,6 +4,17 @@ import { z } from 'zod'
 import type { GeneratedNote, GeneratedVocabulary } from '@/lib/types'
 import { OPENAI_CLIENT_OPTIONS } from '@/server/ai-client-config'
 import { normalizePartOfSpeech } from '@/lib/pos'
+import { phraseContainsWord } from '@/lib/phrase-matcher'
+
+export function getModelName(): string {
+  const rawModel = (process.env.OPENAI_MODEL || 'gpt-5-6-mini').trim()
+  // The user's reverse proxy has a 30s timeout that consistently fails on 'gpt-5-6'.
+  // Auto-redirect 'gpt-5-6' to 'gpt-5-6-mini' to guarantee fast 5-8s responses.
+  if (rawModel === 'gpt-5-6') {
+    return 'gpt-5-6-mini'
+  }
+  return rawModel
+}
 
 export const LexicalChunkSchema = z.object({
   text: z
@@ -91,9 +102,15 @@ async function enrichVocabularyBatch(
   phrases?: string[],
 ): Promise<GeneratedVocabulary[]> {
   const topicContext = topic?.trim() ? `\nLesson Theme / Context: "${topic.trim()}"\n` : ''
-  const phrasesContext =
+  const relevantPhrases =
     phrases && phrases.length > 0
-      ? `\nKey Lesson Collocations & Phrases to integrate:\n${phrases.slice(0, 40).join(', ')}\n`
+      ? phrases.filter((p) => words.some((w) => phraseContainsWord(p, w)))
+      : []
+  const phrasesToInclude =
+    relevantPhrases.length > 0 ? relevantPhrases : (phrases || []).slice(0, 8)
+  const phrasesContext =
+    phrasesToInclude.length > 0
+      ? `\nKey Lesson Collocations & Phrases to integrate:\n${phrasesToInclude.join(', ')}\n`
       : ''
   const userPrompt = `Create rich, engaging flashcards for the following items preserving exact item order.${topicContext}${phrasesContext}
 MANDATORY DIVERSITY & ANTI-REPETITION RULES:
@@ -236,7 +253,7 @@ export async function enrichVocabulary(
   const rawBaseURL =
     process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
   const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
-  const model = process.env.OPENAI_MODEL || 'gpt-5-6'
+  const model = getModelName()
 
   const adapter = openaiCompatibleText(model, {
     baseURL,
@@ -326,7 +343,7 @@ export async function enrichNotes(
   const rawBaseURL =
     process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
   const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
-  const model = process.env.OPENAI_MODEL || 'gpt-5-6'
+  const model = getModelName()
 
   const adapter = openaiCompatibleText(model, {
     baseURL,
@@ -352,44 +369,68 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"ti
     .join('\n\n')}`
 
   let rawOutputNotes: z.infer<typeof NoteSchema>[] = []
+  let lastErr: any = null
+  const MAX_RETRIES = 2
 
-  try {
-    const textOutput = await chat({
-      adapter,
-      systemPrompts: [systemPrompt],
-      messages: [{ role: 'user', content: userPrompt }],
-      stream: false,
-    })
-    const cleaned = extractJson(textOutput)
-    const parsed = JSON.parse(cleaned)
-    if (Array.isArray(parsed)) {
-      rawOutputNotes = parsed
-    } else if (Array.isArray(parsed?.notes)) {
-      rawOutputNotes = parsed.notes
-    } else {
-      const validated = NotesOutputSchema.safeParse(parsed)
-      if (validated.success) {
-        rawOutputNotes = validated.data.notes
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+    try {
+      const textOutput = await chat({
+        adapter,
+        systemPrompts: [systemPrompt],
+        messages: [{ role: 'user', content: userPrompt }],
+        stream: false,
+      })
+      const cleaned = extractJson(textOutput)
+      const parsed = JSON.parse(cleaned)
+      if (Array.isArray(parsed)) {
+        rawOutputNotes = parsed
+      } else if (Array.isArray(parsed?.notes)) {
+        rawOutputNotes = parsed.notes
+      } else {
+        const validated = NotesOutputSchema.safeParse(parsed)
+        if (validated.success) {
+          rawOutputNotes = validated.data.notes
+        }
       }
+      lastErr = null
+      break
+    } catch (err: any) {
+      lastErr = err
+      const isRetryable =
+        err?.status === 502 ||
+        err?.status === 503 ||
+        err?.status === 504 ||
+        err?.message?.includes('502') ||
+        err?.message?.includes('timed out') ||
+        err?.message?.includes('timeout') ||
+        err?.message?.includes('429')
+
+      if (isRetryable && attempt <= MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt))
+        continue
+      }
+      break
     }
-  } catch (err: any) {
-    if (err?.status === 401 || err?.message?.includes('401')) {
+  }
+
+  if (lastErr) {
+    if (lastErr?.status === 401 || lastErr?.message?.includes('401')) {
       throw new Error(
-        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${err?.message || err}`,
+        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${lastErr?.message || lastErr}`,
       )
     }
-    if (err?.status === 405 || err?.message?.includes('405')) {
+    if (lastErr?.status === 405 || lastErr?.message?.includes('405')) {
       throw new Error(
-        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${err?.message || err}`,
+        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${lastErr?.message || lastErr}`,
       )
     }
-    if (err?.status === 502 || err?.message?.includes('502')) {
+    if (lastErr?.status === 502 || lastErr?.message?.includes('502')) {
       throw new Error(
-        `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
+        `Máy chủ Proxy OpenAI trả về lỗi 502 Bad Gateway (Upstream timeout / 403). Gợi ý: Hãy đổi OPENAI_MODEL=gpt-5-6-mini trong file .env để máy chủ proxy phản hồi nhanh trong 5-10s thay vì bị timeout 30s. Chi tiết: ${lastErr?.message || lastErr}`,
       )
     }
     throw new Error(
-      `Failed to enrich notes using TanStack AI: ${err?.message || err}`,
+      `Failed to enrich notes using TanStack AI: ${lastErr?.message || lastErr}`,
     )
   }
 
@@ -435,7 +476,7 @@ export async function generateLessonChunks(
   const rawBaseURL =
     process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
   const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
-  const model = process.env.OPENAI_MODEL || 'gpt-5-6'
+  const model = getModelName()
 
   const adapter = openaiCompatibleText(model, {
     baseURL,
@@ -472,44 +513,68 @@ ${words.slice(0, 40).join(', ')}
 ${storyText ? `Context / Reading text from lesson:\n${storyText.slice(0, 1500)}` : ''}`
 
   let rawCards: z.infer<typeof StandaloneChunkSchema>[] = []
+  let lastErr: any = null
+  const MAX_RETRIES = 2
 
-  try {
-    const textOutput = await chat({
-      adapter,
-      systemPrompts: [systemPrompt],
-      messages: [{ role: 'user', content: userPrompt }],
-      stream: false,
-    })
-    const cleaned = extractJson(textOutput)
-    const parsed = JSON.parse(cleaned)
-    if (Array.isArray(parsed)) {
-      rawCards = parsed
-    } else if (Array.isArray(parsed?.cards)) {
-      rawCards = parsed.cards
-    } else {
-      const validated = StandaloneChunksOutputSchema.safeParse(parsed)
-      if (validated.success) {
-        rawCards = validated.data.cards
+  for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+    try {
+      const textOutput = await chat({
+        adapter,
+        systemPrompts: [systemPrompt],
+        messages: [{ role: 'user', content: userPrompt }],
+        stream: false,
+      })
+      const cleaned = extractJson(textOutput)
+      const parsed = JSON.parse(cleaned)
+      if (Array.isArray(parsed)) {
+        rawCards = parsed
+      } else if (Array.isArray(parsed?.cards)) {
+        rawCards = parsed.cards
+      } else {
+        const validated = StandaloneChunksOutputSchema.safeParse(parsed)
+        if (validated.success) {
+          rawCards = validated.data.cards
+        }
       }
+      lastErr = null
+      break
+    } catch (err: any) {
+      lastErr = err
+      const isRetryable =
+        err?.status === 502 ||
+        err?.status === 503 ||
+        err?.status === 504 ||
+        err?.message?.includes('502') ||
+        err?.message?.includes('timed out') ||
+        err?.message?.includes('timeout') ||
+        err?.message?.includes('429')
+
+      if (isRetryable && attempt <= MAX_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, 1500 * attempt))
+        continue
+      }
+      break
     }
-  } catch (err: any) {
-    if (err?.status === 401 || err?.message?.includes('401')) {
+  }
+
+  if (lastErr) {
+    if (lastErr?.status === 401 || lastErr?.message?.includes('401')) {
       throw new Error(
-        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${err?.message || err}`,
+        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${lastErr?.message || lastErr}`,
       )
     }
-    if (err?.status === 405 || err?.message?.includes('405')) {
+    if (lastErr?.status === 405 || lastErr?.message?.includes('405')) {
       throw new Error(
-        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${err?.message || err}`,
+        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${lastErr?.message || lastErr}`,
       )
     }
-    if (err?.status === 502 || err?.message?.includes('502')) {
+    if (lastErr?.status === 502 || lastErr?.message?.includes('502')) {
       throw new Error(
-        `OpenAI API returned 502 Bad Gateway. Upstream message: ${err?.message || err}`,
+        `Máy chủ Proxy OpenAI trả về lỗi 502 Bad Gateway (Upstream timeout / 403). Gợi ý: Hãy đổi OPENAI_MODEL=gpt-5-6-mini trong file .env để máy chủ proxy phản hồi nhanh trong 5-10s thay vì bị timeout 30s. Chi tiết: ${lastErr?.message || lastErr}`,
       )
     }
     throw new Error(
-      `Failed to generate chunks using TanStack AI: ${err?.message || err}`,
+      `Failed to generate chunks using TanStack AI: ${lastErr?.message || lastErr}`,
     )
   }
 
