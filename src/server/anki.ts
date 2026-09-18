@@ -781,18 +781,31 @@ async function prepareNoteCard(
     }
   }
 
+  const isExercises = /exercise|bài tập/i.test(card.title)
+  const isGrammar = /mục\s+[A-Z]|grammar/i.test(card.title)
+  const badgeText = isExercises
+    ? 'PRACTICE EXERCISES'
+    : isGrammar
+      ? 'GRAMMAR RULE'
+      : 'LANGUAGE NOTE'
+  const subTitle = isExercises
+    ? 'Exercise questions &amp; answers'
+    : isGrammar
+      ? 'Grammar formula &amp; contrastive usage'
+      : 'Key phrases &amp; usage rules'
+
   const front = `
     <style>${CARD_CSS}</style>
     <div class="anki-container" style="padding:24px 14px">
-      <div class="anki-badge anki-badge-note">LANGUAGE NOTE</div>
+      <div class="anki-badge anki-badge-note">${badgeText}</div>
       <div class="anki-word" style="font-size:26px">${escapeHtml(title)}</div>
-      <div class="anki-ipa" style="margin-top:10px">Key phrases &amp; usage rules</div>
+      <div class="anki-ipa" style="margin-top:10px">${subTitle}</div>
     </div>`
 
   const back = `
     <style>${CARD_CSS}</style>
     <div class="anki-container">
-      <div class="anki-badge anki-badge-note">LANGUAGE NOTE</div>
+      <div class="anki-badge anki-badge-note">${badgeText}</div>
       <div class="anki-word" style="font-size:24px;margin-bottom:14px">${escapeHtml(title)}</div>
       
       <div class="anki-box">

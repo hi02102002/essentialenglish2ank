@@ -3,6 +3,7 @@ export type PresetBook = {
   title: string
   level: string
   totalUnits: number
+  category?: 'vocabulary' | 'grammar'
 }
 
 export type ExtractedVocabulary = {
@@ -35,6 +36,7 @@ export type LessonAnalysis = {
   phrases: string[]
   vocabularyList: ExtractedVocabulary[]
   notes: ExtractedNote[]
+  isGrammar?: boolean
 }
 
 export type LexicalChunk = {

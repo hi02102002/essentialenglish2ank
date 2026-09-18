@@ -11,24 +11,35 @@ export const PRESET_BOOKS: PresetBook[] = [
     title: 'English Vocabulary in Use: Pre-intermediate & Intermediate',
     level: 'B1-B2',
     totalUnits: 100,
+    category: 'vocabulary',
   },
   {
     slug: 'english-vocabulary-in-use-upper-intermediate',
     title: 'English Vocabulary in Use: Upper-intermediate',
     level: 'B2',
     totalUnits: 100,
+    category: 'vocabulary',
   },
   {
     slug: 'english-vocabulary-in-use-elementary',
     title: 'English Vocabulary in Use: Elementary',
     level: 'A1-A2',
     totalUnits: 60,
+    category: 'vocabulary',
   },
   {
     slug: 'english-vocabulary-in-use-advanced',
     title: 'English Vocabulary in Use: Advanced',
     level: 'C1-C2',
     totalUnits: 100,
+    category: 'vocabulary',
+  },
+  {
+    slug: 'english-grammar-in-use-with-answers',
+    title: 'English Grammar in Use (5th Edition)',
+    level: 'B1-B2',
+    totalUnits: 152,
+    category: 'grammar',
   },
 ]
 
@@ -250,7 +261,21 @@ function resolveImageUrl(
   }
 }
 
-export function extractPhrasesAndWords(
+export function isGrammarDataset(
+  unit: EssentialEnglishUnit,
+  bookSlugOrUrl?: string,
+): boolean {
+  if (bookSlugOrUrl && /grammar/i.test(bookSlugOrUrl)) return true
+  if (
+    (!unit.wordlist || unit.wordlist.length === 0) &&
+    (unit.reading?.length ?? 0) > 1
+  ) {
+    return true
+  }
+  return false
+}
+
+function extractGrammarPhrasesAndWords(
   unit: EssentialEnglishUnit,
   datasetUrl: string,
 ): {
@@ -258,6 +283,187 @@ export function extractPhrasesAndWords(
   phrases: string[]
   vocabularyList: ExtractedVocabulary[]
 } {
+  const wordsList: ExtractedVocabulary[] = []
+  const phrasesList: ExtractedVocabulary[] = []
+  const seen = new Set<string>()
+
+  const stories = (unit.reading ?? []).filter((r) => r.type === 'story')
+
+  // Find section images (e.g. Unit1-a.jpg)
+  const sectionImages: string[] = []
+  for (const s of stories) {
+    const imgMatch = s.story?.match(/<img[^>]*src=["']([^"']+)["']/i)
+    if (imgMatch) {
+      const resolved = resolveImageUrl(imgMatch[1], datasetUrl)
+      if (resolved && !sectionImages.includes(resolved)) {
+        sectionImages.push(resolved)
+      }
+    }
+  }
+
+  // 1. Extract verbs & grammar forms from <ul class="ul-free-option-none">
+  for (const s of stories) {
+    const storyHtml = s.story ?? ''
+    const ulMatches =
+      storyHtml.match(
+        /<ul[^>]*class=["'][^"']*ul-free-option-none[^"']*["'][^>]*>(.*?)<\/ul>/gis,
+      ) || []
+    for (const ul of ulMatches) {
+      const liMatches = ul.match(/<li>(.*?)<\/li>/gi) || []
+      for (const li of liMatches) {
+        const text = cleanVocabularyItem(cleanHtmlText(li))
+        if (text && text.length >= 2 && !seen.has(text.toLowerCase())) {
+          seen.add(text.toLowerCase())
+          wordsList.push({
+            word: text,
+            kind: text.includes(' ') ? 'phrase' : 'word',
+            hint: 'Động từ/Cấu trúc trọng tâm bài học',
+          })
+        }
+      }
+    }
+  }
+
+  // 2. Extract bold structures, collocations, and contrastive examples from stories
+  let sectionIndex = 0
+  for (const s of stories) {
+    const storyHtml = s.story ?? ''
+    const sectionImg =
+      (s.story?.match(/<img[^>]*src=["']([^"']+)["']/i)
+        ? resolveImageUrl(
+            s.story.match(/<img[^>]*src=["']([^"']+)["']/i)![1],
+            datasetUrl,
+          )
+        : undefined) || sectionImages[sectionIndex]
+    sectionIndex++
+
+    // Check list items <li>...</li>
+    const liMatches = storyHtml.match(/<li>(.*?)<\/li>/gis) || []
+    for (const li of liMatches) {
+      const cleanLi = cleanHtmlText(li)
+      const notMatch = cleanLi.match(/\((?:not\s*)([^\)]+)\)/i)
+      const hint = notMatch ? `(not: ${cleanHtmlText(notMatch[1])})` : undefined
+
+      const strongs = li.match(/<strong>(.*?)<\/strong>/gi) || []
+      for (const st of strongs) {
+        let raw = cleanHtmlText(st)
+          .replace(/^[.,;:—–-]+\s*|\s*[.,;:—–-]+$/g, '')
+          .trim()
+        if (!raw || raw.length < 2) continue
+
+        // Contraction cleanup: "'s having" -> "He's having"
+        if (/^['’]/.test(raw)) {
+          const beforePart = li.split(st)[0]
+          const lastWord = cleanHtmlText(beforePart)
+            .trim()
+            .split(/\s+/)
+            .pop()
+            ?.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, '')
+          if (lastWord) {
+            raw = `${lastWord}${raw}`
+          }
+        }
+
+        // Skip bare auxiliary verbs if they were isolated
+        if (/^(?:are|is|am|were|was|do|does|did)$/i.test(raw)) {
+          continue
+        }
+
+        const lower = raw.toLowerCase()
+        if (seen.has(lower)) continue
+        seen.add(lower)
+
+        phrasesList.push({
+          word: raw,
+          hint,
+          exam: cleanLi,
+          image: sectionImg,
+          kind: raw.includes(' ') ? 'phrase' : 'word',
+        })
+      }
+    }
+
+    // Check key bold concepts in paragraphs: <p><strong>...</strong>...</p>
+    const pMatches =
+      storyHtml.match(
+        /<p>\s*<strong>(.*?)<\/strong>(.*?)(?:<\/p>|<br\s*\/?>)/gis,
+      ) || []
+    for (const p of pMatches) {
+      const stMatch = p.match(/<strong>(.*?)<\/strong>/i)
+      if (stMatch) {
+        const raw = cleanHtmlText(stMatch[1]).trim()
+        if (
+          raw &&
+          raw.length >= 3 &&
+          !seen.has(raw.toLowerCase()) &&
+          !raw.includes('.jpg')
+        ) {
+          seen.add(raw.toLowerCase())
+          const afterText = cleanHtmlText(
+            p.replace(/<strong>.*?<\/strong>/i, ''),
+          ).trim()
+          phrasesList.push({
+            word: raw,
+            hint: afterText ? afterText.slice(0, 100) : undefined,
+            image: sectionImg,
+            kind: 'phrase',
+          })
+        }
+      }
+    }
+  }
+
+  // Deduplicate and promote more complete phrases
+  const dedupedPhrases: ExtractedVocabulary[] = []
+  const sortedPhrases = [...phrasesList].sort(
+    (a, b) => b.word.length - a.word.length,
+  )
+
+  for (const item of sortedPhrases) {
+    const textCore = item.word
+      .toLowerCase()
+      .replace(/^(?:to\s+(?:be\s+)?|a\s+|an\s+|the\s+|as\s+)/, '')
+      .trim()
+    const existing = dedupedPhrases.find((r) => {
+      const rCore = r.word
+        .toLowerCase()
+        .replace(/^(?:to\s+(?:be\s+)?|a\s+|an\s+|the\s+|as\s+)/, '')
+        .trim()
+      return rCore === textCore || rCore.includes(textCore)
+    })
+
+    if (existing) {
+      if (!existing.hint && item.hint) existing.hint = item.hint
+      if (!existing.image && item.image) existing.image = item.image
+      if (!existing.exam && item.exam) existing.exam = item.exam
+    } else {
+      dedupedPhrases.push(item)
+    }
+  }
+
+  dedupedPhrases.sort((a, b) => a.word.localeCompare(b.word))
+  wordsList.sort((a, b) => a.word.localeCompare(b.word))
+
+  return {
+    words: wordsList.map((w) => w.word),
+    phrases: dedupedPhrases.map((p) => p.word),
+    vocabularyList: [...wordsList, ...dedupedPhrases],
+  }
+}
+
+export function extractPhrasesAndWords(
+  unit: EssentialEnglishUnit,
+  datasetUrl: string,
+  bookSlug?: string,
+): {
+  words: string[]
+  phrases: string[]
+  vocabularyList: ExtractedVocabulary[]
+} {
+  if (isGrammarDataset(unit, bookSlug || datasetUrl)) {
+    return extractGrammarPhrasesAndWords(unit, datasetUrl)
+  }
+
   const wordsList: ExtractedVocabulary[] = []
   const phrasesList: ExtractedVocabulary[] = []
   const seen = new Set<string>()
@@ -414,10 +620,104 @@ export function extractPhrasesAndWords(
   }
 }
 
+function extractGrammarNotes(
+  unit: EssentialEnglishUnit,
+  datasetUrl: string,
+): ExtractedNote[] {
+  const notes: ExtractedNote[] = []
+  const readings = unit.reading ?? []
+
+  // 1. Process story sections (A, B, C, D...)
+  for (let i = 0; i < readings.length; i++) {
+    const r = readings[i]
+    if (r.type === 'story') {
+      const sectionLetter = r.en?.trim() || String.fromCharCode(65 + i)
+      const storyHtml = r.story ?? ''
+
+      let sectionTitle = `Mục ${sectionLetter}`
+      const firstStrong = storyHtml.match(/<strong>(.*?)<\/strong>/i)
+      const firstP = storyHtml.match(/<p>(.*?)<\/p>/i)
+      if (firstStrong) {
+        const cleanStrong = cleanHtmlText(firstStrong[1])
+        if (cleanStrong.length >= 3 && cleanStrong.length <= 50) {
+          sectionTitle = `Mục ${sectionLetter}: ${cleanStrong}`
+        }
+      } else if (firstP) {
+        const cleanP = cleanHtmlText(firstP[1])
+        if (cleanP.length >= 3 && cleanP.length <= 60) {
+          sectionTitle = `Mục ${sectionLetter}: ${cleanP}`
+        }
+      }
+
+      const rawLines = storyHtml
+        .split(/<\/(?:p|li|div|h[1-6])>|<br\s*\/?>/i)
+        .map((l) => cleanHtmlText(l))
+        .filter(
+          (l) =>
+            l.length > 10 &&
+            !l.includes('.jpg') &&
+            !l.includes('.png') &&
+            !l.includes('speaker_louder') &&
+            !/^(?:positive|negative|noun|verb|adjective|adverb|examples?)$/i.test(l),
+        )
+
+      if (rawLines.length > 0) {
+        notes.push({
+          id: `note-sec-${sectionLetter.toLowerCase()}`,
+          title: sectionTitle,
+          sectionLetter,
+          content: rawLines.slice(0, 10),
+          rawHtml: storyHtml,
+        })
+      }
+    } else if (r.type === 'faq') {
+      // 2. Process exercises
+      let exHtml = r.story ?? ''
+      // Replace elements with value="..." to [answer]
+      exHtml = exHtml.replace(
+        /<[^>]+value=(?:"([^"]+)"|'([^']+)')(?:\s*h4index=["'][^"']*["'])?[^>]*>(?:___+|.*?<\/[^>]+>)?/gi,
+        (_match, v1, v2) => {
+          const val = v1 || v2 || ''
+          return ` [${cleanHtmlText(val)}] `
+        },
+      )
+
+      const cleanLines = exHtml
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/(?:p|div|h[1-6]|li)>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&nbsp;/g, ' ')
+        .split('\n')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 6)
+
+      if (cleanLines.length > 0) {
+        notes.push({
+          id: 'note-exercises',
+          title: 'Bài tập củng cố (Exercises)',
+          sectionLetter: 'Ex',
+          content: cleanLines.slice(0, 25),
+          rawHtml: r.story,
+        })
+      }
+    }
+  }
+
+  return notes
+}
+
 export function extractNotes(
   unit: EssentialEnglishUnit,
   extractedPhrases: string[] = [],
+  isGrammar?: boolean,
+  datasetUrl?: string,
 ): ExtractedNote[] {
+  if (isGrammar || isGrammarDataset(unit, datasetUrl)) {
+    return extractGrammarNotes(unit, datasetUrl || '')
+  }
+
   const notes: ExtractedNote[] = []
   const story = unit.reading?.[0]?.story
   if (!story) return notes
@@ -491,12 +791,19 @@ export async function analyzeLessonUrl(
     throw new Error(`Unit ${unitNumber} was not found in the vocabulary dataset`)
   }
 
-  const { words, phrases, vocabularyList } = extractPhrasesAndWords(unit, datasetUrl)
-  const notes = extractNotes(unit, phrases)
+  const isGrammar = isGrammarDataset(unit, bookSlug || datasetUrl)
+  const { words, phrases, vocabularyList } = extractPhrasesAndWords(
+    unit,
+    datasetUrl,
+    bookSlug,
+  )
+  const notes = extractNotes(unit, phrases, isGrammar, datasetUrl)
 
   const rawUnitTitle = normalizeText(unit.en ?? `Unit ${unitNumber}`)
   const matchedBook = PRESET_BOOKS.find((b) => b.slug === bookSlug)
-  const bookTitle = matchedBook?.title || 'English Vocabulary in Use'
+  const bookTitle =
+    matchedBook?.title ||
+    (isGrammar ? 'English Grammar in Use' : 'English Vocabulary in Use')
 
   return {
     sourceUrl,
@@ -510,6 +817,7 @@ export async function analyzeLessonUrl(
     phrases,
     vocabularyList,
     notes,
+    isGrammar,
   }
 }
 

@@ -593,15 +593,29 @@ function HomePage() {
       setItemImages(images)
 
       setAllNotes(result.notes)
-      setCheckedNotes(Object.fromEntries(result.notes.map((n) => [n.id, false])))
+      setCheckedNotes(
+        Object.fromEntries(
+          result.notes.map((n) => [n.id, result.isGrammar ? true : false]),
+        ),
+      )
 
-      const bookPrefix = result.bookTitle || 'English Vocabulary in Use'
+      const bookPrefix =
+        result.bookTitle ||
+        (result.isGrammar
+          ? 'English Grammar in Use'
+          : 'English Vocabulary in Use')
       const cleanUnitTitle =
-        result.title.replace(/^English Vocabulary in Use\s*[:-]?\s*/i, '').trim() ||
         result.title
+          .replace(
+            /^(?:English Vocabulary in Use|English Grammar in Use)\s*[:-]?\s*/i,
+            '',
+          )
+          .trim() || result.title
       setDeckName(`${bookPrefix}::${cleanUnitTitle}`)
       setStatus(
-        `Đã bóc tách thành công: ${result.words.length} từ vựng, ${result.phrases.length} cụm từ/thành ngữ và ${result.notes.length} phần ghi chú bài học.`,
+        result.isGrammar
+          ? `Đã bóc tách thành công bài ngữ pháp: ${result.words.length} động từ/cấu trúc, ${result.phrases.length} cụm câu/mẫu câu và ${result.notes.length} phần quy tắc/bài tập.`
+          : `Đã bóc tách thành công: ${result.words.length} từ vựng, ${result.phrases.length} cụm từ/thành ngữ và ${result.notes.length} phần ghi chú bài học.`,
       )
       setStep(2)
     } catch (err) {
@@ -1478,7 +1492,7 @@ function HomePage() {
                   {/* Book Selector */}
                   <div className="flex flex-col gap-1.5">
                     <label htmlFor="book-select" className="text-sm font-semibold text-foreground">
-                      Bộ sách English Vocabulary in Use
+                      Bộ sách giáo trình (Vocabulary & Grammar)
                     </label>
                     <select
                       id="book-select"
@@ -1492,11 +1506,20 @@ function HomePage() {
                       }}
                       className="w-full rounded-lg border border-border/80 bg-background px-3 py-2 text-sm font-medium shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
                     >
-                      {PRESET_BOOKS.map((book) => (
-                        <option key={book.slug} value={book.slug}>
-                          {book.title} ({book.level} - {book.totalUnits} Units)
-                        </option>
-                      ))}
+                      <optgroup label="Từ vựng (Vocabulary in Use)">
+                        {PRESET_BOOKS.filter((b) => b.category !== 'grammar').map((book) => (
+                          <option key={book.slug} value={book.slug}>
+                            {book.title} ({book.level} - {book.totalUnits} Units)
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Ngữ pháp (Grammar in Use)">
+                        {PRESET_BOOKS.filter((b) => b.category === 'grammar').map((book) => (
+                          <option key={book.slug} value={book.slug}>
+                            {book.title} ({book.level} - {book.totalUnits} Units)
+                          </option>
+                        ))}
+                      </optgroup>
                     </select>
                   </div>
 
@@ -1685,7 +1708,9 @@ function HomePage() {
                   <div className="flex items-center gap-2.5">
                     <BookmarkIcon className="size-4 text-primary" aria-hidden="true" />
                     <CardTitle className="text-base font-bold">
-                      1. Danh sách từ vựng (Vocabulary Words)
+                      {lesson?.isGrammar
+                        ? '1. Cấu trúc & Động từ trọng tâm (Key Verbs & Patterns)'
+                        : '1. Danh sách từ vựng (Vocabulary Words)'}
                     </CardTitle>
                     <Badge variant="secondary" className="text-xs">
                       {selectedWords.length} đã chọn
@@ -1781,7 +1806,9 @@ function HomePage() {
                   <div className="flex items-center gap-2.5">
                     <SparklesIcon className="size-4 text-purple-500" aria-hidden="true" />
                     <CardTitle className="text-base font-bold">
-                      2. Cụm từ &amp; Chunks bài học (Key Phrases &amp; Lexical Chunks)
+                      {lesson?.isGrammar
+                        ? '2. Cụm ngữ pháp & Chunks bài học (Grammar Chunks & Patterns)'
+                        : '2. Cụm từ & Chunks bài học (Key Phrases & Lexical Chunks)'}
                     </CardTitle>
                     <Badge
                       variant="outline"
@@ -2005,7 +2032,9 @@ function HomePage() {
                   <div className="flex items-center gap-2.5">
                     <FileTextIcon className="size-4 text-amber-500" aria-hidden="true" />
                     <CardTitle className="text-base font-bold">
-                      3. Ghi chú quy tắc &amp; Lời khuyên (Language Notes)
+                      {lesson?.isGrammar
+                        ? '3. Quy tắc ngữ pháp & Bài tập (Grammar Rules & Exercises)'
+                        : '3. Ghi chú quy tắc & Lời khuyên (Language Notes)'}
                     </CardTitle>
                     <Badge
                       variant="outline"
@@ -2041,7 +2070,9 @@ function HomePage() {
                   </div>
                 </div>
                 <CardDescription className="text-xs">
-                  Tùy chọn tạo thêm thẻ ghi chú quy tắc hoặc lưu ý tổng quan của bài học (mỗi mục thành 1 Note Card).
+                  {lesson?.isGrammar
+                    ? 'Tạo thẻ ghi chú công thức, giải thích cách dùng theo ngữ cảnh và bài tập củng cố (mỗi mục thành 1 Note Card).'
+                    : 'Tùy chọn tạo thêm thẻ ghi chú quy tắc hoặc lưu ý tổng quan của bài học (mỗi mục thành 1 Note Card).'}
                 </CardDescription>
               </CardHeader>
 

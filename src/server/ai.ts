@@ -483,12 +483,13 @@ export async function enrichNotes(
     ...OPENAI_CLIENT_OPTIONS,
   })
 
-  const systemPrompt = `You create high-yield, practical language study notes from English textbook sections for Vietnamese learners.
+  const systemPrompt = `You create high-yield, practical language and grammar study notes from English textbook sections for Vietnamese learners.
 
 GUIDELINES:
-- Distill key collocations, structural patterns, and usage rules into crisp, memorable bullet points.
-- Highlight subtle nuances, common learner pitfalls (prepositions, false friends, formal vs informal register).
-- vietnameseExplanation: Clear, engaging explanation in natural Vietnamese explaining WHEN, WHY, and HOW native speakers use these patterns in real life.
+- Distill key grammatical formulas/forms (e.g. S + am/is/are + V-ing), collocations, structural patterns, and usage rules into crisp, memorable bullet points.
+- For grammar rules or contrastive notes (e.g. "not ..."): clearly highlight the exact formula (Form), when to use vs. when NOT to use, and common learner pitfalls.
+- For practice exercises, preserve key example problems with bracketed answers [answer].
+- vietnameseExplanation: Clear, engaging explanation in natural Vietnamese explaining WHEN, WHY, and HOW native speakers use these structures/patterns in real life, with nuanced contrast.
 - example: A realistic, memorable contextual example sentence in General American English bringing the rule to life. Avoid generic, monotonous templates.
 
 You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"title": string, "content": string[], "vietnameseExplanation": string, "example": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
