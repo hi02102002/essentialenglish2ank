@@ -75,23 +75,144 @@ export const FlashcardsOutputSchema = z.object({
 
 export type FlashcardsOutput = z.infer<typeof FlashcardsOutputSchema>
 
-function extractJson(text: string): string {
+export function extractAndParseJson(text: string): any {
+  if (!text || !text.trim()) {
+    throw new Error('Empty AI response')
+  }
+
   let cleaned = text.trim()
-  const match = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
-  if (match) {
-    cleaned = match[1].trim()
+  // 1. Try markdown code block if present
+  const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)(?:```|$)/i)
+  if (codeBlockMatch && codeBlockMatch[1].trim()) {
+    cleaned = codeBlockMatch[1].trim()
   }
-  const firstBrace = cleaned.indexOf('{')
-  const lastBrace = cleaned.lastIndexOf('}')
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    return cleaned.slice(firstBrace, lastBrace + 1)
+
+  // 2. Locate first JSON boundary ('{' or '[')
+  let firstOpen = -1
+  let openType: '{' | '[' | null = null
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i]
+    if (ch === '{' || ch === '[') {
+      firstOpen = i
+      openType = ch
+      break
+    }
   }
-  const firstBracket = cleaned.indexOf('[')
-  const lastBracket = cleaned.lastIndexOf(']')
-  if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-    return cleaned.slice(firstBracket, lastBracket + 1)
+
+  let candidate = cleaned
+  if (firstOpen !== -1 && openType) {
+    let inString = false
+    let escape = false
+    const stack: string[] = []
+    let closedIndex = -1
+
+    for (let i = firstOpen; i < cleaned.length; i++) {
+      const ch = cleaned[i]
+
+      if (inString) {
+        if (escape) {
+          escape = false
+        } else if (ch === '\\') {
+          escape = true
+        } else if (ch === '"') {
+          inString = false
+        }
+        continue
+      }
+
+      if (ch === '"') {
+        inString = true
+        continue
+      }
+
+      if (ch === '{' || ch === '[') {
+        stack.push(ch)
+      } else if (ch === '}' || ch === ']') {
+        if (stack.length > 0) {
+          const expected = stack[stack.length - 1] === '{' ? '}' : ']'
+          if (ch === expected) {
+            stack.pop()
+          }
+        }
+        if (stack.length === 0) {
+          closedIndex = i
+          break
+        }
+      }
+    }
+
+    if (closedIndex !== -1) {
+      if (openType === '{') {
+        const remainder = cleaned.slice(closedIndex + 1).trim()
+        if (/^,\s*\{/.test(remainder)) {
+          const lastCloseBrace = cleaned.lastIndexOf('}')
+          if (lastCloseBrace > closedIndex) {
+            candidate = '[' + cleaned.slice(firstOpen, lastCloseBrace + 1) + ']'
+          } else {
+            candidate = cleaned.slice(firstOpen, closedIndex + 1)
+          }
+        } else {
+          candidate = cleaned.slice(firstOpen, closedIndex + 1)
+        }
+      } else {
+        candidate = cleaned.slice(firstOpen, closedIndex + 1)
+      }
+    } else {
+      const lastClose = openType === '[' ? cleaned.lastIndexOf(']') : cleaned.lastIndexOf('}')
+      if (lastClose > firstOpen) {
+        candidate = cleaned.slice(firstOpen, lastClose + 1)
+      } else {
+        candidate = cleaned.slice(firstOpen)
+      }
+    }
   }
-  return cleaned
+
+  try {
+    return JSON.parse(candidate)
+  } catch (err1: any) {
+    // Attempt 1: If error indicates extra characters after JSON, slice to the indicated position
+    const posMatch = err1?.message?.match(/at position (\d+)/i)
+    if (posMatch) {
+      const pos = parseInt(posMatch[1], 10)
+      if (pos > 0 && pos < candidate.length) {
+        try {
+          return JSON.parse(candidate.slice(0, pos).trim())
+        } catch {}
+      }
+    }
+
+    // Attempt 2: Remove trailing commas
+    try {
+      const noTrailingCommas = candidate.replace(/,\s*([}\]])/g, '$1')
+      return JSON.parse(noTrailingCommas)
+    } catch {}
+
+    // Attempt 3: If candidate is comma-separated objects without array brackets
+    try {
+      const wrapped = `[${candidate.replace(/^\[?/, '').replace(/\]?$/, '')}]`
+      const noTrailing = wrapped.replace(/,\s*([}\]])/g, '$1')
+      return JSON.parse(noTrailing)
+    } catch {}
+
+    // Attempt 4: Try parsing original cleaned text
+    if (cleaned !== candidate) {
+      try {
+        return JSON.parse(cleaned)
+      } catch {}
+    }
+
+    throw new Error(`JSON parse error: ${err1?.message || err1}`)
+  }
+}
+
+export function extractJson(text: string): string {
+  try {
+    const parsed = extractAndParseJson(text)
+    return JSON.stringify(parsed)
+  } catch {
+    return text.trim()
+  }
 }
 
 async function enrichVocabularyBatch(
@@ -136,12 +257,19 @@ ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
         messages: [{ role: 'user', content: userPrompt }],
         stream: false,
       })
-      const cleaned = extractJson(textOutput)
-      const parsed = JSON.parse(cleaned)
+      const parsed = extractAndParseJson(textOutput)
       if (Array.isArray(parsed)) {
         rawCards = parsed
       } else if (Array.isArray(parsed?.cards)) {
         rawCards = parsed.cards
+      } else if (Array.isArray(parsed?.vocabulary)) {
+        rawCards = parsed.vocabulary
+      } else if (Array.isArray(parsed?.items)) {
+        rawCards = parsed.items
+      } else if (Array.isArray(parsed?.flashcards)) {
+        rawCards = parsed.flashcards
+      } else if (Array.isArray(parsed?.data)) {
+        rawCards = parsed.data
       } else {
         const validated = FlashcardsOutputSchema.safeParse(parsed)
         if (validated.success) {
@@ -159,7 +287,9 @@ ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
         err?.message?.includes('502') ||
         err?.message?.includes('timed out') ||
         err?.message?.includes('timeout') ||
-        err?.message?.includes('429')
+        err?.message?.includes('429') ||
+        err?.message?.includes('JSON') ||
+        err instanceof SyntaxError
 
       if (isRetryable && attempt <= MAX_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, 1500 * attempt))
@@ -191,7 +321,9 @@ ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
   }
 
   return words.map((origWord, index) => {
-    const item = rawCards[index]
+    const item =
+      rawCards.find((c) => String(c?.word || '').trim().toLowerCase() === origWord.trim().toLowerCase()) ||
+      rawCards[index]
     const word = String(item?.word || origWord || '').trim()
     const rawPos = item?.partOfSpeech ? String(item.partOfSpeech).trim() : ''
     const defaultPos = word.includes(' ') ? 'phrase' : 'noun'
@@ -380,12 +512,15 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"ti
         messages: [{ role: 'user', content: userPrompt }],
         stream: false,
       })
-      const cleaned = extractJson(textOutput)
-      const parsed = JSON.parse(cleaned)
+      const parsed = extractAndParseJson(textOutput)
       if (Array.isArray(parsed)) {
         rawOutputNotes = parsed
       } else if (Array.isArray(parsed?.notes)) {
         rawOutputNotes = parsed.notes
+      } else if (Array.isArray(parsed?.items)) {
+        rawOutputNotes = parsed.items
+      } else if (Array.isArray(parsed?.data)) {
+        rawOutputNotes = parsed.data
       } else {
         const validated = NotesOutputSchema.safeParse(parsed)
         if (validated.success) {
@@ -403,7 +538,9 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"ti
         err?.message?.includes('502') ||
         err?.message?.includes('timed out') ||
         err?.message?.includes('timeout') ||
-        err?.message?.includes('429')
+        err?.message?.includes('429') ||
+        err?.message?.includes('JSON') ||
+        err instanceof SyntaxError
 
       if (isRetryable && attempt <= MAX_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, 1500 * attempt))
@@ -524,12 +661,17 @@ ${storyText ? `Context / Reading text from lesson:\n${storyText.slice(0, 1500)}`
         messages: [{ role: 'user', content: userPrompt }],
         stream: false,
       })
-      const cleaned = extractJson(textOutput)
-      const parsed = JSON.parse(cleaned)
+      const parsed = extractAndParseJson(textOutput)
       if (Array.isArray(parsed)) {
         rawCards = parsed
       } else if (Array.isArray(parsed?.cards)) {
         rawCards = parsed.cards
+      } else if (Array.isArray(parsed?.chunks)) {
+        rawCards = parsed.chunks
+      } else if (Array.isArray(parsed?.items)) {
+        rawCards = parsed.items
+      } else if (Array.isArray(parsed?.data)) {
+        rawCards = parsed.data
       } else {
         const validated = StandaloneChunksOutputSchema.safeParse(parsed)
         if (validated.success) {
@@ -547,7 +689,9 @@ ${storyText ? `Context / Reading text from lesson:\n${storyText.slice(0, 1500)}`
         err?.message?.includes('502') ||
         err?.message?.includes('timed out') ||
         err?.message?.includes('timeout') ||
-        err?.message?.includes('429')
+        err?.message?.includes('429') ||
+        err?.message?.includes('JSON') ||
+        err instanceof SyntaxError
 
       if (isRetryable && attempt <= MAX_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, 1500 * attempt))
