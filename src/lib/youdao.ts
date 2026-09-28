@@ -9,7 +9,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js'
 export type YoudaoDictVoiceType = 1 | 2
 export const VOICE_TYPE_UK: YoudaoDictVoiceType = 1
 export const VOICE_TYPE_US: YoudaoDictVoiceType = 2
-export const DEFAULT_VOICE_TYPE: YoudaoDictVoiceType = VOICE_TYPE_US
+export const DEFAULT_VOICE_TYPE: YoudaoDictVoiceType = VOICE_TYPE_UK
 
 type YoudaoSignedDefaults = {
   product: string
@@ -130,7 +130,7 @@ const buildUnsignedVoiceUrl = (text: string, type: YoudaoDictVoiceType) =>
 
 export const getYoudaoDictVoiceUrl = (
   sentence?: string | null,
-  type: YoudaoDictVoiceType = 2,
+  type: YoudaoDictVoiceType = VOICE_TYPE_UK,
   options?: GetYoudaoDictVoiceUrlOptions,
 ) => {
   if (!sentence || typeof sentence !== 'string') return ''
@@ -150,7 +150,7 @@ export const getYoudaoDictVoiceUrl = (
 
 export const getYoudaoUnsignedVoiceUrl = (
   sentence?: string | null,
-  type: YoudaoDictVoiceType = 2,
+  type: YoudaoDictVoiceType = VOICE_TYPE_UK,
 ) => {
   if (!sentence || typeof sentence !== 'string') return ''
   const text = sentence.trim()

@@ -5,15 +5,169 @@ import type { GeneratedNote, GeneratedVocabulary } from '@/lib/types'
 import { OPENAI_CLIENT_OPTIONS } from '@/server/ai-client-config'
 import { normalizePartOfSpeech } from '@/lib/pos'
 import { phraseContainsWord } from '@/lib/phrase-matcher'
+import {
+  AI_PROVIDERS,
+  type AIProviderId,
+  type ClientAiRuntimeConfig,
+} from '@/lib/ai-providers'
 
-export function getModelName(): string {
-  const rawModel = (process.env.OPENAI_MODEL || 'gpt-5-6-mini').trim()
-  // The user's reverse proxy has a 30s timeout that consistently fails on 'gpt-5-6'.
-  // Auto-redirect 'gpt-5-6' to 'gpt-5-6-mini' to guarantee fast 5-8s responses.
-  if (rawModel === 'gpt-5-6') {
-    return 'gpt-5-6-mini'
+export function resolveAiConfig(runtimeConfig?: ClientAiRuntimeConfig) {
+  // 1. Determine provider
+  let providerId: AIProviderId = 'openai'
+  if (runtimeConfig?.provider && AI_PROVIDERS[runtimeConfig.provider]) {
+    providerId = runtimeConfig.provider
+  } else if (
+    process.env.AI_PROVIDER &&
+    AI_PROVIDERS[process.env.AI_PROVIDER as AIProviderId]
+  ) {
+    providerId = process.env.AI_PROVIDER as AIProviderId
+  } else {
+    // Auto-detect from environment
+    const rawEnvUrl = (process.env.OPENAI_URL || process.env.OPENAI_BASE_URL || '').trim()
+    const hasLtnKey = Boolean(process.env.LTN_API_KEY)
+    if (hasLtnKey || /ltnproxy\.com/i.test(rawEnvUrl)) {
+      providerId = 'ltn'
+    } else if (rawEnvUrl && !/api\.openai\.com/i.test(rawEnvUrl)) {
+      providerId = 'custom'
+    } else {
+      providerId = 'openai'
+    }
   }
-  return rawModel
+
+  const providerDef = AI_PROVIDERS[providerId]
+
+  // 2. Determine baseURL
+  let baseURL = runtimeConfig?.baseURL?.trim()
+  if (!baseURL) {
+    if (providerId === 'ltn') {
+      baseURL =
+        process.env.LTN_BASE_URL ||
+        process.env.LTN_URL ||
+        (process.env.OPENAI_URL?.includes('ltnproxy')
+          ? process.env.OPENAI_URL
+          : providerDef.defaultBaseURL)
+    } else if (providerId === 'openai') {
+      baseURL =
+        process.env.OPENAI_BASE_URL ||
+        process.env.OPENAI_URL ||
+        providerDef.defaultBaseURL
+    } else {
+      baseURL =
+        process.env.CUSTOM_AI_URL ||
+        process.env.OPENAI_BASE_URL ||
+        process.env.OPENAI_URL ||
+        providerDef.defaultBaseURL
+    }
+  }
+  baseURL = (baseURL || providerDef.defaultBaseURL).trim().replace(/\/+$/, '')
+  // Normalize LTN URL if /v1 was omitted
+  if (/^https?:\/\/api\.ltnproxy\.com$/i.test(baseURL)) {
+    baseURL = `${baseURL}/v1`
+  }
+
+  // 3. Determine API Key
+  let apiKey = runtimeConfig?.apiKey?.trim()
+  if (!apiKey) {
+    if (providerId === 'ltn') {
+      apiKey = process.env.LTN_API_KEY || process.env.OPENAI_API_KEY || ''
+    } else if (providerId === 'openai') {
+      apiKey = process.env.OPENAI_API_KEY || ''
+    } else {
+      apiKey = process.env.CUSTOM_AI_KEY || process.env.OPENAI_API_KEY || ''
+    }
+  }
+
+  if (!apiKey && providerId !== 'custom') {
+    throw new Error(
+      `Thiếu API Key cho provider "${providerDef.name}". Vui lòng cấu hình biến môi trường ${providerDef.apiKeyEnvName} trong file .env hoặc nhập trực tiếp trên giao diện.`,
+    )
+  }
+
+  // 4. Determine Model
+  let model = runtimeConfig?.model?.trim()
+  if (!model) {
+    if (providerId === 'ltn') {
+      const raw = (process.env.LTN_MODEL || process.env.OPENAI_MODEL || '').trim()
+      if (raw === 'gpt-5-6' || raw === 'gpt-5-6-mini' || raw === 'gpt-5-6-pro' || !raw) {
+        model = providerDef.defaultModel
+      } else {
+        model = raw
+      }
+    } else if (providerId === 'openai') {
+      const raw = (process.env.OPENAI_MODEL || '').trim()
+      if (raw.startsWith('gpt-5-6') || !raw) {
+        model = providerDef.defaultModel
+      } else {
+        model = raw
+      }
+    } else {
+      model =
+        process.env.CUSTOM_AI_MODEL ||
+        process.env.OPENAI_MODEL ||
+        providerDef.defaultModel
+    }
+  }
+
+  return {
+    provider: providerDef,
+    providerId,
+    baseURL,
+    apiKey,
+    model,
+  }
+}
+
+export function getAiBaseURL(runtimeConfig?: ClientAiRuntimeConfig): string {
+  return resolveAiConfig(runtimeConfig).baseURL
+}
+
+export function getAiApiKey(runtimeConfig?: ClientAiRuntimeConfig): string {
+  return resolveAiConfig(runtimeConfig).apiKey
+}
+
+export function getModelName(runtimeConfig?: ClientAiRuntimeConfig): string {
+  return resolveAiConfig(runtimeConfig).model
+}
+
+function handleAiError(
+  lastErr: any,
+  model: string,
+  baseURL: string,
+  providerName: string,
+  context: string,
+): never {
+  if (lastErr?.status === 401 || lastErr?.message?.includes('401')) {
+    throw new Error(
+      `[${providerName}] Lỗi 401 Unauthorized: API Key không hợp lệ hoặc đã hết hạn. Vui lòng kiểm tra lại API Key. Chi tiết: ${lastErr?.message || lastErr}`,
+    )
+  }
+  if (
+    lastErr?.status === 404 ||
+    lastErr?.message?.includes('model_not_found') ||
+    lastErr?.message?.includes('404')
+  ) {
+    throw new Error(
+      `[${providerName}] Model "${model}" không tồn tại hoặc không được hỗ trợ bởi endpoint (${baseURL}). Vui lòng chọn một model hợp lệ từ danh sách hỗ trợ của ${providerName}. Chi tiết: ${lastErr?.message || lastErr}`,
+    )
+  }
+  if (lastErr?.status === 405 || lastErr?.message?.includes('405')) {
+    throw new Error(
+      `[${providerName}] Lỗi 405 Method Not Allowed. Hãy đảm bảo Base URL có đuôi /v1 (ví dụ: https://api.ltnproxy.com/v1). Chi tiết: ${lastErr?.message || lastErr}`,
+    )
+  }
+  if (lastErr?.status === 429 || lastErr?.message?.includes('429')) {
+    throw new Error(
+      `[${providerName}] Lỗi 429 Too Many Requests (Hết quota hoặc vượt giới hạn rate limit). Vui lòng thử lại sau giây lát hoặc nạp thêm credit. Chi tiết: ${lastErr?.message || lastErr}`,
+    )
+  }
+  if (lastErr?.status === 502 || lastErr?.message?.includes('502')) {
+    throw new Error(
+      `[${providerName}] Lỗi 502 Bad Gateway (Upstream timeout). Gợi ý: Hãy đổi sang model nhẹ/nhanh hơn trong danh sách. Chi tiết: ${lastErr?.message || lastErr}`,
+    )
+  }
+  throw new Error(
+    `[${providerName}] Không thể ${context}: ${lastErr?.message || lastErr}`,
+  )
 }
 
 export const LexicalChunkSchema = z.object({
@@ -25,7 +179,7 @@ export const LexicalChunkSchema = z.object({
   ipa: z
     .string()
     .describe(
-      'Standard General American (US) English IPA pronunciation for this chunk enclosed in slashes, e.g. /ˈteɪk ədˈvæn.tɪdʒ əv/',
+      'Standard British English (UK / Received Pronunciation) IPA pronunciation for this chunk enclosed in slashes, e.g. /ˈteɪk ədˈvɑːn.tɪdʒ əv/',
     ),
   meaningVi: z
     .string()
@@ -35,7 +189,7 @@ export const LexicalChunkSchema = z.object({
     .describe('Concise English definition or explanation of how the chunk is used'),
   example: z
     .string()
-    .describe('A natural example sentence using this specific chunk in General American English'),
+    .describe('A natural example sentence using this specific chunk in British English'),
   imageQuery: z
     .string()
     .describe('Safe, concrete visual search query without quotes illustrating this chunk'),
@@ -51,11 +205,11 @@ export const FlashcardSchema = z.object({
   ipa: z
     .string()
     .describe(
-      'Standard General American (US) English IPA pronunciation enclosed in slashes, e.g. /ˈvɑːtʃər/, /ˈskedʒuːl/, /ˈwɔːtər/',
+      'Standard British English (UK / Received Pronunciation) IPA pronunciation enclosed in slashes, e.g. /ˈvaʊ.tʃər/, /ˈʃed.juːl/, /ˈwɔː.tər/',
     ),
   vietnamese: z.string().describe('Vietnamese translation or concise meaning for learners'),
   englishDefinition: z.string().describe('Original concise English definition, do not copy textbook wording'),
-  example: z.string().describe('Natural example sentence illustrating usage'),
+  example: z.string().describe('Natural example sentence illustrating usage in British English'),
   imageQuery: z.string().describe('Safe, concrete visual search query without quotes'),
   partOfSpeech: z
     .string()
@@ -65,7 +219,7 @@ export const FlashcardSchema = z.object({
   chunks: z
     .array(LexicalChunkSchema)
     .describe(
-      '1 to 2 high-frequency lexical chunks or collocations using this word, each with its own US IPA, Vietnamese meaning, English definition, and example sentence',
+      '1 to 2 high-frequency lexical chunks or collocations using this word, each with its own UK IPA, Vietnamese meaning, English definition, and example sentence',
     ),
 })
 
@@ -81,6 +235,9 @@ export function extractAndParseJson(text: string): any {
   }
 
   let cleaned = text.trim()
+  // Strip reasoning / think tags if emitted by reasoning models (DeepSeek, Kimi, GLM, etc.)
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+
   // 1. Try markdown code block if present
   const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)(?:```|$)/i)
   if (codeBlockMatch && codeBlockMatch[1].trim()) {
@@ -219,6 +376,9 @@ async function enrichVocabularyBatch(
   words: string[],
   adapter: any,
   systemPrompt: string,
+  model: string,
+  baseURL: string,
+  providerName: string,
   topic?: string,
   phrases?: string[],
 ): Promise<GeneratedVocabulary[]> {
@@ -235,10 +395,10 @@ async function enrichVocabularyBatch(
       : ''
   const userPrompt = `Create rich, engaging flashcards for the following items preserving exact item order.${topicContext}${phrasesContext}
 MANDATORY DIVERSITY & ANTI-REPETITION RULES:
-1. SCENARIO & SUBJECT VARIETY: Each card in this batch MUST feature a completely distinct, relatable scenario and subject. Do NOT repeat sentence openers. Do NOT start consecutive sentences with "She" or "He". Use a rich mix of subjects (e.g. "I", "we", "my roommate", "commuters", "the flight attendant", "local residents", "the barista", "the doctor", "travelers").
+1. SCENARIO & SUBJECT VARIETY: Each card in this batch MUST feature a completely distinct, relatable scenario and subject. Do NOT repeat sentence openers. Do NOT start consecutive sentences with "She" or "He". Use a rich mix of subjects (e.g. "I", "we", "my flatmate", "commuters", "the flight attendant", "local residents", "the barista", "the doctor", "travelers").
 2. SENTENCE STRUCTURE VARIETY: Avoid formulaic patterns like "[Subject] [verb]ed [object] because [reason]". Use diverse structures (temporal openers: "On busy weekday mornings...", conditional clauses: "If you want to...", dialogue quotes: "'Don't forget to...', she reminded me", compound sentences with coordinating conjunctions).
 3. LEXICAL CHUNKS INTEGRATION & CONTRAST:
-   - For each word, check if any phrase from the "Key Lesson Collocations & Phrases" above naturally uses or collocates with this word. If so, PRIORITIZE selecting it as a chunk for this word and generate its accurate US IPA, Vietnamese meaning, English definition, and example sentence.
+   - For each word, check if any phrase from the "Key Lesson Collocations & Phrases" above naturally uses or collocates with this word. If so, PRIORITIZE selecting it as a chunk for this word and generate its accurate UK IPA, Vietnamese meaning, English definition, and example sentence.
    - The 1 to 2 lexical chunks for each word MUST be distinct in type and function. NEVER provide redundant pairs like "take a bath" and "have a bath". Instead, pick 1 strong collocation (e.g. "run a warm bath") and 1 conversational expression, phrasal verb, or idiom (e.g. "soak in the tub").
 4. VIVID PHOTOGRAPHIC IMAGE QUERIES: Describe clear, high-resolution, atmospheric photography scenes suitable for image search (e.g. "steaming ceramic coffee mug on rustic wooden table morning sunlight photography"). Avoid generic "person doing X".
 
@@ -300,24 +460,7 @@ ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
   }
 
   if (lastErr) {
-    if (lastErr?.status === 401 || lastErr?.message?.includes('401')) {
-      throw new Error(
-        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${lastErr?.message || lastErr}`,
-      )
-    }
-    if (lastErr?.status === 405 || lastErr?.message?.includes('405')) {
-      throw new Error(
-        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${lastErr?.message || lastErr}`,
-      )
-    }
-    if (lastErr?.status === 502 || lastErr?.message?.includes('502')) {
-      throw new Error(
-        `Máy chủ Proxy OpenAI trả về lỗi 502 Bad Gateway (Upstream timeout / 403). Gợi ý: Hãy đổi OPENAI_MODEL=gpt-5-6-mini trong file .env để máy chủ proxy phản hồi nhanh trong 5-10s thay vì bị timeout 30s. Chi tiết: ${lastErr?.message || lastErr}`,
-      )
-    }
-    throw new Error(
-      `Failed to generate vocabulary using TanStack AI: ${lastErr?.message || lastErr}`,
-    )
+    handleAiError(lastErr, model, baseURL, providerName, 'generate vocabulary')
   }
 
   return words.map((origWord, index) => {
@@ -374,18 +517,11 @@ export async function enrichVocabulary(
   words: string[],
   topic?: string,
   phrases?: string[],
+  runtimeConfig?: ClientAiRuntimeConfig,
 ): Promise<GeneratedVocabulary[]> {
   if (!words.length) return []
 
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
-  }
-
-  const rawBaseURL =
-    process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
-  const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
-  const model = getModelName()
+  const { baseURL, apiKey, model, provider } = resolveAiConfig(runtimeConfig)
 
   const adapter = openaiCompatibleText(model, {
     baseURL,
@@ -393,26 +529,27 @@ export async function enrichVocabulary(
     ...OPENAI_CLIENT_OPTIONS,
   })
 
-  const systemPrompt = `You are an expert bilingual English lexicographer and pedagogue creating rich, memorable English vocabulary flashcards for Vietnamese learners.
+  const systemPrompt = `You are an expert bilingual English lexicographer and pedagogue creating rich, memorable English vocabulary flashcards with British English (UK) pronunciation and authentic usage for Vietnamese learners.
 
 CORE PRINCIPLES & DIVERSITY MANDATES:
 1. ANTI-REPETITION & VARIETY (CRITICAL):
    - Never generate monotonous, cookie-cutter sentence formulas.
-   - Do NOT start sentences repeatedly with "She..." or "He...". Use diverse perspectives: first-person ("I / We"), realistic third-person agents ("the barista", "commuters", "our tour guide", "my roommate", "passengers"), second-person advice ("When you...", "Make sure to..."), or situational openers ("After an exhausting shift...", "On chilly autumn mornings...").
+   - Do NOT start sentences repeatedly with "She..." or "He...". Use diverse perspectives: first-person ("I / We"), realistic third-person agents ("the barista", "commuters", "our tour guide", "my flatmate", "passengers"), second-person advice ("When you...", "Make sure to..."), or situational openers ("After an exhausting shift...", "On chilly autumn mornings...").
    - Mix sentence types: complex sentences with subordinate clauses, natural conversational quotes, and vivid real-life scenes.
 2. LEXICAL CHUNKS DIVERSITY:
-   - For each word/phrase, provide 1 to 2 high-frequency, authentic lexical chunks showing how native speakers naturally use this word.
+   - For each word/phrase, provide 1 to 2 high-frequency, authentic lexical chunks showing how native speakers naturally use this word in British English.
    - NO REDUNDANCY: Never supply two nearly identical chunks (e.g. NEVER give both "take a bath" and "have a bath"; NEVER give both "go to sleep" and "fall asleep").
-   - Prefer contrasting categories: strong collocations (Verb + Noun, Adj + Noun, e.g. "strike a balance", "hectic schedule", "run a bath"), phrasal verbs, idioms, or situational phrases (e.g. "sleep in", "at the crack of dawn", "in a hurry").
-   - Each chunk MUST have its own accurate General American US IPA, natural Vietnamese translation, concise English usage explanation, and contextual example sentence.
+   - Prefer contrasting categories: strong collocations (Verb + Noun, Adj + Noun, e.g. "strike a balance", "hectic schedule", "have a bath"), phrasal verbs, idioms, or situational phrases (e.g. "sleep in", "at the crack of dawn", "in a hurry").
+   - Each chunk MUST have its own accurate British English (UK / Received Pronunciation) IPA, natural Vietnamese translation, concise English usage explanation, and contextual example sentence.
 3. LEARNER-FRIENDLY ENGLISH DEFINITIONS:
    - Write in the style of Oxford Advanced Learner's Dictionary / Cambridge Dictionary: clear, conversational, engaging, explaining how and when the word is used.
    - Avoid dry, circular robotic boilerplate like "the act of...", "a time when you wash your body", "a device used for...".
 4. IDIOMATIC VIETNAMESE (TỰ NHIÊN, CHUẨN XÁC):
    - Translate into natural, idiomatic Vietnamese that reflects actual everyday speech and modern usage.
    - Include common collocations or usage notes in parentheses where helpful (e.g. "bồn tắm; việc tắm bồn / ngâm mình"). Avoid literal, clunky machine translation.
-5. GENERAL AMERICAN (US) IPA:
-   - Use standard General American US IPA transcription enclosed in slashes (e.g. rhotic /r/, flap [t] /t̬/, American vowels like /æ/, /ɑː/, /oʊ/, e.g. /ˈwɑː.t̬ɚ/, /ˈskedʒ.uːl/).
+5. BRITISH ENGLISH (UK) IPA & SPELLING:
+   - Use standard British English (Received Pronunciation - RP) IPA transcription enclosed in slashes (e.g. non-rhotic, British vowels like /ɒ/, /ɑː/, /əʊ/, e.g. /ˈwɔː.tər/, /ˈʃed.juːl/, /ˈvaʊ.tʃər/).
+   - Prefer British English spelling and natural UK phrasing where applicable.
 6. PHOTOGRAPHY IMAGE QUERIES:
    - Write concrete visual descriptions with atmospheric, photographic keywords (lighting, setting, composition) suitable for search engines.
    - Avoid generic phrases like "person doing X" or "man holding Y". No quotation marks.
@@ -444,7 +581,17 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"wo
 
   const results = await pMap(
     batches,
-    (batch) => enrichVocabularyBatch(batch, adapter, systemPrompt, topic, phrases),
+    (batch) =>
+      enrichVocabularyBatch(
+        batch,
+        adapter,
+        systemPrompt,
+        model,
+        baseURL,
+        provider.name,
+        topic,
+        phrases,
+      ),
     2,
   )
 
@@ -464,18 +611,11 @@ export const NotesOutputSchema = z.object({
 
 export async function enrichNotes(
   rawNotes: Array<{ title: string; content: string[] }>,
+  runtimeConfig?: ClientAiRuntimeConfig,
 ): Promise<GeneratedNote[]> {
   if (!rawNotes.length) return []
 
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
-  }
-
-  const rawBaseURL =
-    process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
-  const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
-  const model = getModelName()
+  const { baseURL, apiKey, model, provider } = resolveAiConfig(runtimeConfig)
 
   const adapter = openaiCompatibleText(model, {
     baseURL,
@@ -483,14 +623,14 @@ export async function enrichNotes(
     ...OPENAI_CLIENT_OPTIONS,
   })
 
-  const systemPrompt = `You create high-yield, practical language and grammar study notes from English textbook sections for Vietnamese learners.
+  const systemPrompt = `You create high-yield, practical language and grammar study notes from English textbook sections for Vietnamese learners with British English usage.
 
 GUIDELINES:
 - Distill key grammatical formulas/forms (e.g. S + am/is/are + V-ing), collocations, structural patterns, and usage rules into crisp, memorable bullet points.
 - For grammar rules or contrastive notes (e.g. "not ..."): clearly highlight the exact formula (Form), when to use vs. when NOT to use, and common learner pitfalls.
 - For practice exercises, preserve key example problems with bracketed answers [answer].
 - vietnameseExplanation: Clear, engaging explanation in natural Vietnamese explaining WHEN, WHY, and HOW native speakers use these structures/patterns in real life, with nuanced contrast.
-- example: A realistic, memorable contextual example sentence in General American English bringing the rule to life. Avoid generic, monotonous templates.
+- example: A realistic, memorable contextual example sentence in British English bringing the rule to life. Avoid generic, monotonous templates.
 
 You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"title": string, "content": string[], "vietnameseExplanation": string, "example": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
 
@@ -552,24 +692,7 @@ You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"ti
   }
 
   if (lastErr) {
-    if (lastErr?.status === 401 || lastErr?.message?.includes('401')) {
-      throw new Error(
-        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${lastErr?.message || lastErr}`,
-      )
-    }
-    if (lastErr?.status === 405 || lastErr?.message?.includes('405')) {
-      throw new Error(
-        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${lastErr?.message || lastErr}`,
-      )
-    }
-    if (lastErr?.status === 502 || lastErr?.message?.includes('502')) {
-      throw new Error(
-        `Máy chủ Proxy OpenAI trả về lỗi 502 Bad Gateway (Upstream timeout / 403). Gợi ý: Hãy đổi OPENAI_MODEL=gpt-5-6-mini trong file .env để máy chủ proxy phản hồi nhanh trong 5-10s thay vì bị timeout 30s. Chi tiết: ${lastErr?.message || lastErr}`,
-      )
-    }
-    throw new Error(
-      `Failed to enrich notes using TanStack AI: ${lastErr?.message || lastErr}`,
-    )
+    handleAiError(lastErr, model, baseURL, provider.name, 'enrich notes')
   }
 
   return rawNotes.map((orig, index) => {
@@ -589,10 +712,10 @@ export const StandaloneChunkSchema = z.object({
   word: z
     .string()
     .describe('The lexical chunk or expression, e.g. "take advantage of", "breathe in and out"'),
-  ipa: z.string().describe('Standard General American (US) IPA pronunciation'),
+  ipa: z.string().describe('Standard British English (UK / Received Pronunciation) IPA pronunciation'),
   vietnamese: z.string().describe('Vietnamese translation or meaning'),
   englishDefinition: z.string().describe('Concise English definition'),
-  example: z.string().describe('Natural example sentence using this chunk in American English'),
+  example: z.string().describe('Natural example sentence using this chunk in British English'),
   imageQuery: z.string().describe('Safe, concrete visual search query'),
   partOfSpeech: z.string().describe('Part of speech, e.g. "phrase", "phrasal verb", or "idiom"'),
 })
@@ -605,16 +728,9 @@ export async function generateLessonChunks(
   words: string[],
   storyText?: string,
   topic?: string,
+  runtimeConfig?: ClientAiRuntimeConfig,
 ): Promise<GeneratedVocabulary[]> {
-  const apiKey = process.env.OPENAI_API_KEY
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is missing. Copy .env.example to .env and add your key.')
-  }
-
-  const rawBaseURL =
-    process.env.OPENAI_BASE_URL || process.env.OPENAI_URL || 'https://api.openai.com/v1'
-  const baseURL = rawBaseURL.trim().replace(/\/+$/, '')
-  const model = getModelName()
+  const { baseURL, apiKey, model, provider } = resolveAiConfig(runtimeConfig)
 
   const adapter = openaiCompatibleText(model, {
     baseURL,
@@ -622,7 +738,7 @@ export async function generateLessonChunks(
     ...OPENAI_CLIENT_OPTIONS,
   })
 
-  const systemPrompt = `You are an expert English teacher specialized in Lexical Chunking methodology. From the provided vocabulary list, lesson theme, and context, generate 6 to 12 high-yield, authentic Lexical Chunks.
+  const systemPrompt = `You are an expert English teacher specialized in Lexical Chunking methodology. From the provided vocabulary list, lesson theme, and context, generate 6 to 12 high-yield, authentic Lexical Chunks with British English (UK) usage and pronunciation.
 
 CRITICAL DIVERSITY & QUALITY RULES:
 1. CATEGORY DIVERSITY: Do NOT generate chunks that all follow the same pattern (e.g. avoid generating 6 chunks that all start with "take a..." or "have a..."). Balance across diverse categories:
@@ -637,8 +753,8 @@ CRITICAL DIVERSITY & QUALITY RULES:
    - Provide natural, fluent Vietnamese meanings that capture the real pragmatic nuance, not robotic word-for-word translations.
 4. SPECIFIC PHOTOGRAPHIC IMAGE QUERIES:
    - Describe high-quality, realistic photography scenes with atmosphere and setting details instead of generic "person doing X". No quotes.
-5. GENERAL AMERICAN (US) IPA:
-   - Standard US IPA transcription enclosed in slashes.
+5. BRITISH ENGLISH (UK) IPA:
+   - Standard British English (UK / Received Pronunciation) IPA transcription enclosed in slashes.
 
 You MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
 
@@ -703,24 +819,7 @@ ${storyText ? `Context / Reading text from lesson:\n${storyText.slice(0, 1500)}`
   }
 
   if (lastErr) {
-    if (lastErr?.status === 401 || lastErr?.message?.includes('401')) {
-      throw new Error(
-        `OpenAI API returned 401 Unauthorized. Please verify your OPENAI_API_KEY and OPENAI_URL in .env. Details: ${lastErr?.message || lastErr}`,
-      )
-    }
-    if (lastErr?.status === 405 || lastErr?.message?.includes('405')) {
-      throw new Error(
-        `OpenAI API endpoint returned 405 Method Not Allowed. Please verify your OPENAI_URL in .env (ensure the URL points to an endpoint supporting POST /chat/completions without trailing slash). Details: ${lastErr?.message || lastErr}`,
-      )
-    }
-    if (lastErr?.status === 502 || lastErr?.message?.includes('502')) {
-      throw new Error(
-        `Máy chủ Proxy OpenAI trả về lỗi 502 Bad Gateway (Upstream timeout / 403). Gợi ý: Hãy đổi OPENAI_MODEL=gpt-5-6-mini trong file .env để máy chủ proxy phản hồi nhanh trong 5-10s thay vì bị timeout 30s. Chi tiết: ${lastErr?.message || lastErr}`,
-      )
-    }
-    throw new Error(
-      `Failed to generate chunks using TanStack AI: ${lastErr?.message || lastErr}`,
-    )
+    handleAiError(lastErr, model, baseURL, provider.name, 'generate chunks')
   }
 
   return rawCards.map((item) => ({

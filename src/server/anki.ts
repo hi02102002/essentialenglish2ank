@@ -1,7 +1,7 @@
 import AnkiExport from 'anki-apkg-export'
 import type { AnyAnkiCard, NoteCard, VocabularyCard } from '@/lib/types'
 import { downloadMedia } from './media'
-import { getYoudaoUnsignedVoiceUrl } from '@/lib/youdao'
+import { getYoudaoUnsignedVoiceUrl, VOICE_TYPE_UK } from '@/lib/youdao'
 import { getBingImageUrl, getBingAlternativeUrl } from '@/lib/bing-image'
 import { getPosInfo } from '@/lib/pos'
 
@@ -604,13 +604,13 @@ async function prepareVocabularyCard(
     : ''
 
   const targetWordAudioUrl = card.wordAudioUrl
-    ? card.wordAudioUrl.replace(/([?&]type=)1\b/, '$12')
-    : getYoudaoUnsignedVoiceUrl(word, 2)
+    ? card.wordAudioUrl.replace(/([?&]type=)2\b/, '$11')
+    : getYoudaoUnsignedVoiceUrl(word, VOICE_TYPE_UK)
 
   const exampleText = card.example?.trim() || ''
   const targetExampleAudioUrl = card.exampleAudioUrl
-    ? card.exampleAudioUrl.replace(/([?&]type=)1\b/, '$12')
-    : (exampleText ? getYoudaoUnsignedVoiceUrl(exampleText, 2) : '')
+    ? card.exampleAudioUrl.replace(/([?&]type=)2\b/, '$11')
+    : (exampleText ? getYoudaoUnsignedVoiceUrl(exampleText, VOICE_TYPE_UK) : '')
 
   const [imageRes, wordAudioRes, exampleAudioRes, chunkAudioResults] = await Promise.all([
     (async () => {
@@ -625,7 +625,7 @@ async function prepareVocabularyCard(
       if (!targetWordAudioUrl) return null
       let audio = await download(targetWordAudioUrl, 'mp3')
       if (!audio && word) {
-        audio = await download(getYoudaoUnsignedVoiceUrl(word, 2), 'mp3')
+        audio = await download(getYoudaoUnsignedVoiceUrl(word, VOICE_TYPE_UK), 'mp3')
       }
       return audio
     })(),
@@ -633,7 +633,7 @@ async function prepareVocabularyCard(
       if (!targetExampleAudioUrl) return null
       let audio = await download(targetExampleAudioUrl, 'mp3')
       if (!audio && exampleText) {
-        audio = await download(getYoudaoUnsignedVoiceUrl(exampleText, 2), 'mp3')
+        audio = await download(getYoudaoUnsignedVoiceUrl(exampleText, VOICE_TYPE_UK), 'mp3')
       }
       return audio
     })(),
@@ -642,12 +642,12 @@ async function prepareVocabularyCard(
         const text = chunk?.text?.trim()
         if (!text) return null
         const url = chunk.audioUrl
-          ? chunk.audioUrl.replace(/([?&]type=)1\b/, '$12')
-          : getYoudaoUnsignedVoiceUrl(text, 2)
+          ? chunk.audioUrl.replace(/([?&]type=)2\b/, '$11')
+          : getYoudaoUnsignedVoiceUrl(text, VOICE_TYPE_UK)
         if (!url) return null
         let audio = await download(url, 'mp3')
         if (!audio) {
-          audio = await download(getYoudaoUnsignedVoiceUrl(text, 2), 'mp3')
+          audio = await download(getYoudaoUnsignedVoiceUrl(text, VOICE_TYPE_UK), 'mp3')
         }
         return audio
       }),
@@ -765,13 +765,13 @@ async function prepareNoteCard(
   const exampleText = card.example?.trim() || ''
   if (exampleText) {
     const targetExampleAudioUrl = card.exampleAudioUrl
-      ? card.exampleAudioUrl.replace(/([?&]type=)1\b/, '$12')
-      : getYoudaoUnsignedVoiceUrl(exampleText, 2)
+      ? card.exampleAudioUrl.replace(/([?&]type=)2\b/, '$11')
+      : getYoudaoUnsignedVoiceUrl(exampleText, VOICE_TYPE_UK)
 
     if (targetExampleAudioUrl) {
       let audio = await download(targetExampleAudioUrl, 'mp3')
       if (!audio) {
-        audio = await download(getYoudaoUnsignedVoiceUrl(exampleText, 2), 'mp3')
+        audio = await download(getYoudaoUnsignedVoiceUrl(exampleText, VOICE_TYPE_UK), 'mp3')
       }
       if (audio) {
         const filename = `${base}-example.${audio.extension}`

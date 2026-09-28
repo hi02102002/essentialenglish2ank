@@ -27,6 +27,14 @@ import {
   PlusIcon,
   Trash2Icon,
   Loader2Icon,
+  Settings2Icon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ExternalLinkIcon,
+  CpuIcon,
+  ShieldCheckIcon,
+  SaveIcon,
+  RotateCcwIcon,
 } from 'lucide-react'
 import {
   analyzeLesson,
@@ -36,10 +44,16 @@ import {
   checkAuthRequirement,
   verifyPassword,
   verifySessionToken,
+  getAiProvidersConfig,
 } from '@/server/functions'
+import {
+  AI_PROVIDERS,
+  type AIProviderId,
+  type ClientAiRuntimeConfig,
+} from '@/lib/ai-providers'
 import { PRESET_BOOKS } from '@/server/lesson'
 import { getBingImageUrl } from '@/lib/bing-image'
-import { getYoudaoDictVoiceUrl } from '@/lib/youdao'
+import { getYoudaoDictVoiceUrl, VOICE_TYPE_UK } from '@/lib/youdao'
 import { getPosInfo, QUICK_POS_OPTIONS, normalizePartOfSpeech } from '@/lib/pos'
 import { findMatchingWordForPhrase } from '@/lib/phrase-matcher'
 import type {
@@ -96,7 +110,63 @@ function parseCustomWords(text: string): string[] {
   )
 }
 
+const AI_CONFIG_STORAGE_KEY = 'anki_ai_provider_config'
 
+type StoredAiSettings = {
+  provider: AIProviderId
+  models: Record<AIProviderId, string>
+  baseURLs: Record<AIProviderId, string>
+  apiKeys: Record<AIProviderId, string>
+}
+
+const DEFAULT_STORED_SETTINGS: StoredAiSettings = {
+  provider: 'ltn',
+  models: {
+    ltn: 'gpt-5.6-luna',
+    openai: 'gpt-4o-mini',
+    custom: 'gpt-4o-mini',
+  },
+  baseURLs: {
+    ltn: 'https://api.ltnproxy.com/v1',
+    openai: 'https://api.openai.com/v1',
+    custom: 'http://localhost:11434/v1',
+  },
+  apiKeys: {
+    ltn: '',
+    openai: '',
+    custom: '',
+  },
+}
+
+function getInitialAiSettings(): StoredAiSettings {
+  if (typeof window === 'undefined') return DEFAULT_STORED_SETTINGS
+  try {
+    const raw = localStorage.getItem(AI_CONFIG_STORAGE_KEY)
+    if (!raw) return DEFAULT_STORED_SETTINGS
+    const parsed = JSON.parse(raw)
+    const validProvider =
+      parsed.provider && parsed.provider in AI_PROVIDERS
+        ? (parsed.provider as AIProviderId)
+        : 'ltn'
+    return {
+      provider: validProvider,
+      models: { ...DEFAULT_STORED_SETTINGS.models, ...(parsed.models || {}) },
+      baseURLs: { ...DEFAULT_STORED_SETTINGS.baseURLs, ...(parsed.baseURLs || {}) },
+      apiKeys: { ...DEFAULT_STORED_SETTINGS.apiKeys, ...(parsed.apiKeys || {}) },
+    }
+  } catch {
+    return DEFAULT_STORED_SETTINGS
+  }
+}
+
+function saveAiSettings(settings: StoredAiSettings) {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(AI_CONFIG_STORAGE_KEY, JSON.stringify(settings))
+  } catch (err) {
+    console.error('Failed to save AI settings to localStorage', err)
+  }
+}
 
 function VocabularyImageEditor({
   card,
@@ -419,6 +489,224 @@ function HomePage() {
     setIsAuthenticated(false)
   }
 
+  // AI Provider & Model Configuration
+  const [aiSettings, setAiSettings] = useState<StoredAiSettings>(getInitialAiSettings)
+  const [serverAiInfo, setServerAiInfo] = useState<{
+    providers: typeof AI_PROVIDERS
+    activeProviderId: AIProviderId
+    serverConfig: {
+      hasLtnKey: boolean
+      hasOpenAiKey: boolean
+      hasCustomKey: boolean
+      defaultModel: string
+      defaultBaseURL: string
+    }
+  } | null>(null)
+  const [showAiSettings, setShowAiSettings] = useState(false)
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false)
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState('')
+
+  useEffect(() => {
+    // 1. Immediately hydrate AI settings & user preferences from localStorage on client mount
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(AI_CONFIG_STORAGE_KEY)
+        if (raw) {
+          const saved = getInitialAiSettings()
+          setAiSettings(saved)
+        }
+        const savedBook = localStorage.getItem('anki_selected_book')
+        if (savedBook && PRESET_BOOKS.some((b) => b.slug === savedBook)) {
+          setSelectedBook(savedBook)
+        }
+        const savedUnit = localStorage.getItem('anki_unit_number')
+        if (savedUnit && !Number.isNaN(Number(savedUnit))) {
+          setUnitNumber(Number(savedUnit))
+        }
+        const savedMerge = localStorage.getItem('anki_merge_phrases')
+        if (savedMerge !== null) {
+          setMergePhrasesIntoCards(savedMerge === 'true')
+        }
+        const savedMode = localStorage.getItem('anki_input_mode')
+        if (savedMode === 'preset' || savedMode === 'url' || savedMode === 'text') {
+          setInputMode(savedMode)
+        }
+      } catch (err) {
+        console.error('Failed to restore settings from localStorage', err)
+      }
+    }
+
+    // 2. Fetch server configuration
+    async function loadServerAiConfig() {
+      try {
+        const info = await getAiProvidersConfig()
+        setServerAiInfo(info)
+        if (typeof window !== 'undefined') {
+          const raw = localStorage.getItem(AI_CONFIG_STORAGE_KEY)
+          if (!raw && info.activeProviderId) {
+            setAiSettings((prev) => {
+              const next: StoredAiSettings = {
+                ...prev,
+                provider: info.activeProviderId,
+                models: {
+                  ...prev.models,
+                  [info.activeProviderId]:
+                    info.serverConfig.defaultModel || prev.models[info.activeProviderId],
+                },
+                baseURLs: {
+                  ...prev.baseURLs,
+                  [info.activeProviderId]:
+                    info.serverConfig.defaultBaseURL || prev.baseURLs[info.activeProviderId],
+                },
+              }
+              saveAiSettings(next)
+              return next
+            })
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load server AI config', err)
+      }
+    }
+    void loadServerAiConfig()
+  }, [])
+
+  function onSelectProvider(newProvider: AIProviderId) {
+    const providerDef = AI_PROVIDERS[newProvider]
+    const nextModel = aiSettings.models[newProvider] || providerDef.defaultModel
+    const nextBaseURL = aiSettings.baseURLs[newProvider] || providerDef.defaultBaseURL
+
+    const updated: StoredAiSettings = {
+      ...aiSettings,
+      provider: newProvider,
+      models: {
+        ...aiSettings.models,
+        [newProvider]: nextModel,
+      },
+      baseURLs: {
+        ...aiSettings.baseURLs,
+        [newProvider]: nextBaseURL,
+      },
+    }
+    setAiSettings(updated)
+    saveAiSettings(updated)
+    setSaveSuccessMsg(`✓ Đã tự động lưu cấu hình ${providerDef.name} (${nextModel}) vào LocalStorage`)
+    setTimeout(() => setSaveSuccessMsg(''), 3000)
+    setStatus(`Đã tự động áp dụng cấu hình ${providerDef.name} (${nextModel}) và lưu vào localStorage`)
+  }
+
+  function onSelectModel(newModel: string) {
+    const updated: StoredAiSettings = {
+      ...aiSettings,
+      models: {
+        ...aiSettings.models,
+        [aiSettings.provider]: newModel,
+      },
+    }
+    setAiSettings(updated)
+    saveAiSettings(updated)
+    setSaveSuccessMsg(`✓ Đã lưu model ${newModel} vào LocalStorage`)
+    setTimeout(() => setSaveSuccessMsg(''), 2500)
+  }
+
+  function onUpdateApiKey(key: string) {
+    const updated: StoredAiSettings = {
+      ...aiSettings,
+      apiKeys: {
+        ...aiSettings.apiKeys,
+        [aiSettings.provider]: key,
+      },
+    }
+    setAiSettings(updated)
+    saveAiSettings(updated)
+    setSaveSuccessMsg('✓ Đã lưu API Key vào LocalStorage')
+    setTimeout(() => setSaveSuccessMsg(''), 2500)
+  }
+
+  function onUpdateBaseURL(url: string) {
+    const updated: StoredAiSettings = {
+      ...aiSettings,
+      baseURLs: {
+        ...aiSettings.baseURLs,
+        [aiSettings.provider]: url,
+      },
+    }
+    setAiSettings(updated)
+    saveAiSettings(updated)
+    setSaveSuccessMsg('✓ Đã lưu Base URL vào LocalStorage')
+    setTimeout(() => setSaveSuccessMsg(''), 2500)
+  }
+
+  function onExplicitSave() {
+    saveAiSettings(aiSettings)
+    setSaveSuccessMsg('✓ Đã lưu toàn bộ cấu hình AI vào LocalStorage thành công!')
+    setTimeout(() => setSaveSuccessMsg(''), 3500)
+  }
+
+  function onResetAiDefaults() {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(AI_CONFIG_STORAGE_KEY)
+    }
+    setAiSettings(DEFAULT_STORED_SETTINGS)
+    saveAiSettings(DEFAULT_STORED_SETTINGS)
+    setSaveSuccessMsg('↺ Đã khôi phục cấu hình mặc định ban đầu và lưu LocalStorage.')
+    setTimeout(() => setSaveSuccessMsg(''), 3500)
+  }
+
+  function changeInputMode(mode: 'preset' | 'url' | 'text') {
+    setInputMode(mode)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('anki_input_mode', mode)
+    }
+  }
+
+  function changeSelectedBook(bookSlug: string) {
+    setSelectedBook(bookSlug)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('anki_selected_book', bookSlug)
+    }
+  }
+
+  function changeUnitNumber(num: number) {
+    setUnitNumber(num)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('anki_unit_number', String(num))
+    }
+  }
+
+  function changeMergePhrases(val: boolean) {
+    setMergePhrasesIntoCards(val)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('anki_merge_phrases', String(val))
+    }
+  }
+
+  function getEffectiveAiConfig(): ClientAiRuntimeConfig {
+    const currentDef = AI_PROVIDERS[aiSettings.provider] || AI_PROVIDERS.ltn
+    const model = aiSettings.models[aiSettings.provider] || currentDef.defaultModel
+    const baseURL = aiSettings.baseURLs[aiSettings.provider] || currentDef.defaultBaseURL
+    const apiKey = aiSettings.apiKeys[aiSettings.provider]?.trim() || undefined
+
+    return {
+      provider: aiSettings.provider,
+      model,
+      baseURL,
+      apiKey,
+    }
+  }
+
+  const currentProviderDef = AI_PROVIDERS[aiSettings.provider] || AI_PROVIDERS.ltn
+  const currentModel = aiSettings.models[aiSettings.provider] || currentProviderDef.defaultModel
+  const currentBaseURL = aiSettings.baseURLs[aiSettings.provider] || currentProviderDef.defaultBaseURL
+  const currentApiKey = aiSettings.apiKeys[aiSettings.provider] || ''
+
+  const hasServerKey = useMemo(() => {
+    if (!serverAiInfo) return false
+    if (aiSettings.provider === 'ltn') return serverAiInfo.serverConfig.hasLtnKey
+    if (aiSettings.provider === 'openai') return serverAiInfo.serverConfig.hasOpenAiKey
+    return serverAiInfo.serverConfig.hasCustomKey
+  }, [serverAiInfo, aiSettings.provider])
+
   const selectedWords = useMemo(
     () => allWords.filter((w) => checkedWords[w] !== false),
     [allWords, checkedWords],
@@ -620,7 +908,16 @@ function HomePage() {
       setStep(2)
     } catch (err) {
       setStatus('')
-      if (err instanceof Error && err.message.includes('401')) {
+      const isAppAuthError =
+        err instanceof Error &&
+        (err.message.includes('Mật khẩu hoặc token truy cập không hợp lệ') ||
+          (err.message.includes('401') &&
+            !err.message.includes('API Key') &&
+            !err.message.includes('API key') &&
+            !err.message.includes('LTN') &&
+            !err.message.includes('OpenAI')))
+
+      if (isAppAuthError) {
         sessionStorage.removeItem('anki_auth_token')
         setIsAuthenticated(false)
         setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
@@ -676,6 +973,7 @@ function HomePage() {
 
     try {
       const token = getStoredToken()
+      const effectiveAiConfig = getEffectiveAiConfig()
       const storyText =
         lesson?.notes?.map((n) => n.content?.join(' ')).filter(Boolean).join('\n') || ''
       const generated = await generateChunks({
@@ -684,6 +982,7 @@ function HomePage() {
           storyText,
           topic: lesson?.unitTitle || deckName,
           token,
+          aiConfig: effectiveAiConfig,
         },
       })
 
@@ -724,7 +1023,16 @@ function HomePage() {
       setStatus(`Đã tạo và thêm thành công ${newPhrases.length} cụm từ Lexical Chunks vào bài học!`)
     } catch (err) {
       setStatus('')
-      if (err instanceof Error && err.message.includes('401')) {
+      const isAppAuthError =
+        err instanceof Error &&
+        (err.message.includes('Mật khẩu hoặc token truy cập không hợp lệ') ||
+          (err.message.includes('401') &&
+            !err.message.includes('API Key') &&
+            !err.message.includes('API key') &&
+            !err.message.includes('LTN') &&
+            !err.message.includes('OpenAI')))
+
+      if (isAppAuthError) {
         sessionStorage.removeItem('anki_auth_token')
         setIsAuthenticated(false)
         setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
@@ -752,11 +1060,11 @@ function HomePage() {
         if (existingWords.has(lower)) continue
         existingWords.add(lower)
 
-        const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(trimmed, 2)
+        const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(trimmed, VOICE_TYPE_UK)
         const exampleText = chunk.example || card.example || ''
         const chunkExampleAudio =
           chunk.exampleAudioUrl ||
-          (exampleText ? getYoudaoDictVoiceUrl(exampleText, 2) : '')
+          (exampleText ? getYoudaoDictVoiceUrl(exampleText, VOICE_TYPE_UK) : '')
         const chunkQuery = chunk.imageQuery || trimmed
         const chunkImg = chunk.imageUrl || getBingImageUrl(chunkQuery)
 
@@ -842,6 +1150,7 @@ function HomePage() {
 
     try {
       const token = getStoredToken()
+      const effectiveAiConfig = getEffectiveAiConfig()
       const phraseSet = new Set(selectedPhrases)
       const topic = lesson?.unitTitle || deckName
 
@@ -858,7 +1167,7 @@ function HomePage() {
         const fromNum = bIdx * CLIENT_BATCH_SIZE + 1
         const toNum = Math.min((bIdx + 1) * CLIENT_BATCH_SIZE, cleanedVocabItems.length)
         setStatus(
-          `Đang dùng TanStack AI tạo thẻ từ vựng: ${fromNum}–${toNum} / ${cleanedVocabItems.length} (${Math.round((fromNum / cleanedVocabItems.length) * 100)}%)…`,
+          `Đang dùng ${currentProviderDef.badge} (${effectiveAiConfig.model}) tạo thẻ từ vựng: ${fromNum}–${toNum} / ${cleanedVocabItems.length} (${Math.round((fromNum / cleanedVocabItems.length) * 100)}%)…`,
         )
         const batchResult = await generateVocabulary({
           data: {
@@ -866,6 +1175,7 @@ function HomePage() {
             topic,
             phrases: selectedPhrases,
             token,
+            aiConfig: effectiveAiConfig,
           },
         })
         if (Array.isArray(batchResult)) {
@@ -883,7 +1193,7 @@ function HomePage() {
           const fromNote = i + 1
           const toNote = Math.min(i + NOTE_BATCH_SIZE, selectedNotes.length)
           setStatus(
-            `Đang dùng TanStack AI làm giàu ghi chú: ${fromNote}–${toNote} / ${selectedNotes.length}…`,
+            `Đang dùng ${currentProviderDef.badge} (${effectiveAiConfig.model}) làm giàu ghi chú: ${fromNote}–${toNote} / ${selectedNotes.length}…`,
           )
           const notesResult = await generateNotes({
             data: {
@@ -892,6 +1202,7 @@ function HomePage() {
                 content: n.content,
               })),
               token,
+              aiConfig: effectiveAiConfig,
             },
           })
           if (Array.isArray(notesResult)) {
@@ -938,10 +1249,10 @@ function HomePage() {
             imageQuery: chunkQuery,
             imageUrl: c.imageUrl || (chunkQuery ? getBingImageUrl(chunkQuery) : ''),
             partOfSpeech: normalizePartOfSpeech(c.partOfSpeech) || 'phrase',
-            audioUrl: c.audioUrl || (text ? getYoudaoDictVoiceUrl(text, 2) : ''),
+            audioUrl: c.audioUrl || (text ? getYoudaoDictVoiceUrl(text, VOICE_TYPE_UK) : ''),
             exampleAudioUrl:
               c.exampleAudioUrl ||
-              (exampleText ? getYoudaoDictVoiceUrl(exampleText, 2) : ''),
+              (exampleText ? getYoudaoDictVoiceUrl(exampleText, VOICE_TYPE_UK) : ''),
           }
         })
 
@@ -965,7 +1276,7 @@ function HomePage() {
                 imageQuery: mp,
                 imageUrl: mpImg || getBingImageUrl(mp),
                 partOfSpeech: 'phrase',
-                audioUrl: getYoudaoDictVoiceUrl(mp, 2),
+                audioUrl: getYoudaoDictVoiceUrl(mp, VOICE_TYPE_UK),
                 exampleAudioUrl: '',
               })
               existingChunkTexts.add(mpLower)
@@ -988,8 +1299,8 @@ function HomePage() {
           chunks,
           partOfSpeech: item.partOfSpeech || (isPhrase ? 'phrase' : 'noun'),
           imageUrl: customImg || getBingImageUrl(item.imageQuery),
-          wordAudioUrl: getYoudaoDictVoiceUrl(item.word, 2),
-          exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, 2),
+          wordAudioUrl: getYoudaoDictVoiceUrl(item.word, VOICE_TYPE_UK),
+          exampleAudioUrl: getYoudaoDictVoiceUrl(item.example, VOICE_TYPE_UK),
           sourceUrl: lesson?.sourceUrl ?? 'custom-input',
         })
 
@@ -1002,11 +1313,11 @@ function HomePage() {
             if (createdWordSet.has(chunkLower)) continue
             createdWordSet.add(chunkLower)
 
-            const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(chunkText, 2)
+            const chunkAudio = chunk.audioUrl || getYoudaoDictVoiceUrl(chunkText, VOICE_TYPE_UK)
             const exampleText = chunk.example || item.example || ''
             const chunkExampleAudio =
               chunk.exampleAudioUrl ||
-              (exampleText ? getYoudaoDictVoiceUrl(exampleText, 2) : '')
+              (exampleText ? getYoudaoDictVoiceUrl(exampleText, VOICE_TYPE_UK) : '')
             const chunkQuery = chunk.imageQuery || chunkText
             const chunkImg = chunk.imageUrl || getBingImageUrl(chunkQuery)
 
@@ -1050,7 +1361,7 @@ function HomePage() {
             vietnameseExplanation: item.vietnameseExplanation || '',
             example: item.example || '',
             exampleAudioUrl: item.example
-              ? getYoudaoDictVoiceUrl(item.example, 2)
+              ? getYoudaoDictVoiceUrl(item.example, VOICE_TYPE_UK)
               : '',
             sourceUrl: lesson?.sourceUrl ?? 'custom-input',
           }),
@@ -1066,12 +1377,21 @@ function HomePage() {
       )
       setStatus(
         `Đã tạo thành công ${nextCards.length} thẻ (${wordCount} từ vựng${phraseCount > 0 ? `, ${phraseCount} cụm từ độc lập` : ''
-        }, tích hợp ${integratedChunks} cụm từ/chunks vào mặt sau thẻ kèm phát âm US, ${noteCards.length} ghi chú).`,
+        }, tích hợp ${integratedChunks} cụm từ/chunks vào mặt sau thẻ kèm phát âm UK, ${noteCards.length} ghi chú).`,
       )
       setStep(3)
     } catch (err) {
       setStatus('')
-      if (err instanceof Error && err.message.includes('401')) {
+      const isAppAuthError =
+        err instanceof Error &&
+        (err.message.includes('Mật khẩu hoặc token truy cập không hợp lệ') ||
+          (err.message.includes('401') &&
+            !err.message.includes('API Key') &&
+            !err.message.includes('API key') &&
+            !err.message.includes('LTN') &&
+            !err.message.includes('OpenAI')))
+
+      if (isAppAuthError) {
         sessionStorage.removeItem('anki_auth_token')
         setIsAuthenticated(false)
         setAuthError('Phiên xác thực không hợp lệ. Vui lòng nhập lại mật khẩu.')
@@ -1096,21 +1416,21 @@ function HomePage() {
             next.imageUrl = getBingImageUrl(vPatch.imageQuery)
           }
           if (vPatch.word !== undefined) {
-            next.wordAudioUrl = getYoudaoDictVoiceUrl(vPatch.word, 2)
+            next.wordAudioUrl = getYoudaoDictVoiceUrl(vPatch.word, VOICE_TYPE_UK)
           }
           if (vPatch.example !== undefined) {
-            next.exampleAudioUrl = getYoudaoDictVoiceUrl(vPatch.example, 2)
+            next.exampleAudioUrl = getYoudaoDictVoiceUrl(vPatch.example, VOICE_TYPE_UK)
           }
           if (vPatch.chunks !== undefined) {
             next.chunks = vPatch.chunks.map((c) => ({
               ...c,
-              audioUrl: c.audioUrl || getYoudaoDictVoiceUrl(c.text, 2),
+              audioUrl: c.audioUrl || getYoudaoDictVoiceUrl(c.text, VOICE_TYPE_UK),
             }))
           }
         } else if (next.type === 'note') {
           const nPatch = patch as Partial<NoteCard>
           if (nPatch.example !== undefined) {
-            next.exampleAudioUrl = getYoudaoDictVoiceUrl(nPatch.example, 2)
+            next.exampleAudioUrl = getYoudaoDictVoiceUrl(nPatch.example, VOICE_TYPE_UK)
           }
         }
         return next
@@ -1407,6 +1727,277 @@ function HomePage() {
         </div>
       </nav>
 
+      {/* AI Provider & Accent Quick Switcher Panel */}
+      <div className="mb-6 rounded-2xl border border-border/80 bg-card/70 p-3.5 sm:p-4 shadow-xs backdrop-blur-md transition-all">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
+              <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <CpuIcon className="size-4" aria-hidden="true" />
+              </div>
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                AI Provider:
+              </span>
+            </div>
+
+            <Badge variant="outline" className="font-semibold text-xs border-primary/40 bg-primary/5 text-primary">
+              {currentProviderDef.name}
+            </Badge>
+
+            <Badge variant="secondary" className="font-mono text-xs">
+              {currentModel}
+            </Badge>
+
+            <Badge variant="outline" className="text-xs font-medium border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 gap-1">
+              🇬🇧 Giọng đọc & IPA: Anh - Anh (UK)
+            </Badge>
+
+            {hasServerKey && !currentApiKey && (
+              <span className="inline-flex items-center gap-1 text-[0.7rem] text-emerald-600 dark:text-emerald-400 font-medium">
+                <ShieldCheckIcon className="size-3.5" aria-hidden="true" />
+                Key: Server (.env)
+              </span>
+            )}
+            {Boolean(currentApiKey) && (
+              <span className="inline-flex items-center gap-1 text-[0.7rem] text-primary font-medium">
+                <ShieldCheckIcon className="size-3.5" aria-hidden="true" />
+                Key: Đã nhập riêng
+              </span>
+            )}
+            <Badge variant="outline" className="text-[0.68rem] font-mono py-0 text-muted-foreground border-border/70 hidden sm:inline-flex gap-1 items-center">
+              <SaveIcon className="size-2.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+              LocalStorage
+            </Badge>
+          </div>
+
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={() => setShowAiSettings(!showAiSettings)}
+            className="gap-1.5 text-xs font-medium"
+          >
+            <Settings2Icon className="size-3.5 text-primary" aria-hidden="true" />
+            {showAiSettings ? 'Thu gọn cài đặt' : 'Đổi Provider / Model'}
+            {showAiSettings ? (
+              <ChevronUpIcon className="size-3.5 opacity-60" aria-hidden="true" />
+            ) : (
+              <ChevronDownIcon className="size-3.5 opacity-60" aria-hidden="true" />
+            )}
+          </Button>
+        </div>
+
+        {/* Expanded Settings */}
+        {showAiSettings && (
+          <div className="mt-4 pt-4 border-t border-border/60 flex flex-col gap-4 text-xs animate-in fade-in duration-200">
+            {/* Provider Selector Cards */}
+            <div className="flex flex-col gap-1.5">
+              <label className="font-semibold text-foreground text-xs">
+                Chọn AI Provider (Tự động áp dụng Base URL & Model tương thích):
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {(['ltn', 'openai', 'custom'] as AIProviderId[]).map((pId) => {
+                  const p = AI_PROVIDERS[pId]
+                  const isSelected = aiSettings.provider === pId
+                  return (
+                    <button
+                      key={pId}
+                      type="button"
+                      onClick={() => onSelectProvider(pId)}
+                      className={`flex flex-col items-start gap-1 p-3 rounded-xl border text-left transition-all cursor-pointer ${isSelected
+                        ? 'border-primary bg-primary/10 ring-1 ring-primary shadow-xs'
+                        : 'border-border/70 bg-card hover:bg-muted/40 hover:border-border'
+                        }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-bold text-sm text-foreground">{p.name}</span>
+                        <Badge
+                          variant={isSelected ? 'default' : 'outline'}
+                          className="text-[0.65rem] px-1.5 py-0"
+                        >
+                          {p.badge}
+                        </Badge>
+                      </div>
+                      <p className="text-[0.72rem] text-muted-foreground line-clamp-2 leading-relaxed">
+                        {p.description}
+                      </p>
+                      {isSelected && (
+                        <span className="mt-1 text-[0.68rem] text-primary font-semibold flex items-center gap-1">
+                          <CheckIcon className="size-3" aria-hidden="true" />
+                          Đang kích hoạt & tự động áp dụng
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Model Selection and Base URL */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* Model Picker */}
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="ai-model-select" className="font-semibold text-foreground text-xs">
+                    Mô hình AI ({currentProviderDef.name})
+                  </label>
+                  <span className="text-[0.68rem] text-muted-foreground">
+                    {currentProviderDef.models.find((m) => m.id === currentModel)?.description || ''}
+                  </span>
+                </div>
+                <select
+                  id="ai-model-select"
+                  value={currentProviderDef.models.some((m) => m.id === currentModel) ? currentModel : '__custom__'}
+                  onChange={(e) => {
+                    if (e.target.value !== '__custom__') {
+                      onSelectModel(e.target.value)
+                    }
+                  }}
+                  className="w-full rounded-lg border border-border/80 bg-background px-3 py-2 text-xs font-medium shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                >
+                  {currentProviderDef.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} ({m.id}) {m.recommended ? '⭐ (Khuyên dùng)' : ''}
+                    </option>
+                  ))}
+                  <option value="__custom__">Nhập model tùy chọn khác...</option>
+                </select>
+                {(!currentProviderDef.models.some((m) => m.id === currentModel) || currentModel === '__custom__') && (
+                  <Input
+                    value={currentModel === '__custom__' ? '' : currentModel}
+                    onChange={(e) => onSelectModel(e.target.value)}
+                    placeholder="Nhập mã model tùy ý (vd: gpt-5.6-luna, claude-opus-5-5...)"
+                    className="text-xs font-mono h-8 mt-1"
+                  />
+                )}
+              </div>
+
+              {/* Base URL */}
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="ai-baseurl" className="font-semibold text-foreground text-xs">
+                    Base URL Endpoint
+                  </label>
+                  <a
+                    href={currentProviderDef.docsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[0.68rem] text-primary hover:underline inline-flex items-center gap-1"
+                  >
+                    Docs <ExternalLinkIcon className="size-2.5" aria-hidden="true" />
+                  </a>
+                </div>
+                <Input
+                  id="ai-baseurl"
+                  value={currentBaseURL}
+                  onChange={(e) => onUpdateBaseURL(e.target.value)}
+                  placeholder={currentProviderDef.defaultBaseURL}
+                  className="text-xs font-mono h-9"
+                />
+                {aiSettings.provider === 'ltn' && !currentBaseURL.endsWith('/v1') && (
+                  <span className="text-[0.68rem] text-amber-600 dark:text-amber-400">
+                    Lưu ý LTN Proxy: Endpoint bắt buộc cần có đuôi <code className="font-mono font-bold">/v1</code> (vd: https://api.ltnproxy.com/v1).
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* API Key */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label htmlFor="ai-apikey" className="font-semibold text-foreground text-xs">
+                  API Key ({currentProviderDef.apiKeyEnvName})
+                </label>
+                {hasServerKey ? (
+                  <span className="text-[0.68rem] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                    <ShieldCheckIcon className="size-3" aria-hidden="true" />
+                    Đã có sẵn trên Server (.env). Điền ô dưới chỉ khi muốn ghi đè key cá nhân.
+                  </span>
+                ) : (
+                  <span className="text-[0.68rem] text-amber-600 dark:text-amber-400">
+                    Chưa có key trên server. Vui lòng nhập key bên dưới.
+                  </span>
+                )}
+              </div>
+              <div className="relative">
+                <Input
+                  id="ai-apikey"
+                  type={showApiKeyInput ? 'text' : 'password'}
+                  value={currentApiKey}
+                  onChange={(e) => onUpdateApiKey(e.target.value)}
+                  placeholder={
+                    hasServerKey
+                      ? '•••••••••••••••••••••••••••••••• (Đang dùng key server .env)'
+                      : currentProviderDef.apiKeyPlaceholder
+                  }
+                  className="text-xs font-mono h-9 pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKeyInput(!showApiKeyInput)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  title={showApiKeyInput ? 'Ẩn API Key' : 'Hiện API Key'}
+                >
+                  {showApiKeyInput ? (
+                    <EyeOffIcon className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <EyeIcon className="size-3.5" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Accent & Prompt notice */}
+            <div className="rounded-lg bg-primary/5 border border-primary/20 p-2.5 flex items-center gap-2.5 text-[0.72rem] text-muted-foreground">
+              <Badge variant="outline" className="shrink-0 text-[0.65rem] border-primary/40 text-primary font-mono">
+                UK Accent
+              </Badge>
+              <span>
+                Hệ thống được cấu hình chuẩn <strong>Tiếng Anh - Anh (UK / RP)</strong> cho cả phiên âm IPA, giải nghĩa ngữ cảnh, cấu trúc collocations và âm thanh đọc mẫu Youdao (Voice Type 1).
+              </span>
+            </div>
+
+            {/* LocalStorage persistence & Actions Footer */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border/40">
+              <div className="flex items-center gap-2">
+                <span className="text-[0.72rem] text-muted-foreground flex items-center gap-1.5 font-medium">
+                  <SaveIcon className="size-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                  Tự động lưu LocalStorage trình duyệt
+                </span>
+                {saveSuccessMsg && (
+                  <span className="text-[0.72rem] text-emerald-600 dark:text-emerald-400 font-semibold animate-in fade-in">
+                    {saveSuccessMsg}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  onClick={onResetAiDefaults}
+                  className="gap-1 text-[0.7rem] text-muted-foreground hover:text-foreground h-7 px-2.5"
+                >
+                  <RotateCcwIcon className="size-3" aria-hidden="true" />
+                  Khôi phục mặc định
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={onExplicitSave}
+                  className="gap-1 text-[0.7rem] font-semibold h-7 px-3 border-primary/40 text-primary hover:bg-primary/10"
+                >
+                  <SaveIcon className="size-3" aria-hidden="true" />
+                  Lưu cấu hình
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Global Status / Error Alert Banner */}
       {(status || error) && (
         <div
@@ -1459,7 +2050,7 @@ function HomePage() {
               <Button
                 variant={inputMode === 'preset' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setInputMode('preset')}
+                onClick={() => changeInputMode('preset')}
                 className="gap-2"
               >
                 <CompassIcon className="size-4" aria-hidden="true" />
@@ -1468,7 +2059,7 @@ function HomePage() {
               <Button
                 variant={inputMode === 'url' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setInputMode('url')}
+                onClick={() => changeInputMode('url')}
                 className="gap-2"
               >
                 <LinkIcon className="size-4" aria-hidden="true" />
@@ -1477,7 +2068,7 @@ function HomePage() {
               <Button
                 variant={inputMode === 'text' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => setInputMode('text')}
+                onClick={() => changeInputMode('text')}
                 className="gap-2"
               >
                 <FileTextIcon className="size-4" aria-hidden="true" />
@@ -1498,10 +2089,10 @@ function HomePage() {
                       id="book-select"
                       value={selectedBook}
                       onChange={(e) => {
-                        setSelectedBook(e.target.value)
+                        changeSelectedBook(e.target.value)
                         const book = PRESET_BOOKS.find((b) => b.slug === e.target.value)
                         if (book && unitNumber > book.totalUnits) {
-                          setUnitNumber(1)
+                          changeUnitNumber(1)
                         }
                       }}
                       className="w-full rounded-lg border border-border/80 bg-background px-3 py-2 text-sm font-medium shadow-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
@@ -1534,7 +2125,7 @@ function HomePage() {
                       min={1}
                       max={selectedPresetBook?.totalUnits || 100}
                       value={unitNumber}
-                      onChange={(e) => setUnitNumber(Math.max(1, Number(e.target.value)))}
+                      onChange={(e) => changeUnitNumber(Math.max(1, Number(e.target.value)))}
                       className="font-mono text-sm font-bold"
                     />
                   </div>
@@ -1874,7 +2465,7 @@ function HomePage() {
                   <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold p-1.5 px-2.5 rounded-lg border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/15 transition-colors">
                     <Checkbox
                       checked={mergePhrasesIntoCards}
-                      onCheckedChange={(c) => setMergePhrasesIntoCards(Boolean(c))}
+                      onCheckedChange={(c) => changeMergePhrases(Boolean(c))}
                     />
                     <span className="text-foreground">
                       Gộp cụm từ &amp; AI Chunks vào thẻ từ vựng tương ứng (Khuyên dùng - học gọn nhẹ)
@@ -1885,7 +2476,7 @@ function HomePage() {
                 <CardDescription className="text-xs">
                   {mergePhrasesIntoCards ? (
                     <span>
-                      ✨ <strong className="text-foreground">Chế độ gộp đã bật:</strong> Các cụm từ được chọn sẽ được tích hợp trực tiếp vào mặt sau của thẻ từ vựng chính kèm phát âm US &amp; nghĩa tiếng Việt (không tạo thẻ rời rạc). Những cụm từ đứng độc lập không liên quan đến từ vựng nào mới tạo thẻ riêng.
+                      ✨ <strong className="text-foreground">Chế độ gộp đã bật:</strong> Các cụm từ được chọn sẽ được tích hợp trực tiếp vào mặt sau của thẻ từ vựng chính kèm phát âm UK &amp; nghĩa tiếng Việt (không tạo thẻ rời rạc). Những cụm từ đứng độc lập không liên quan đến từ vựng nào mới tạo thẻ riêng.
                     </span>
                   ) : (
                     <span>
@@ -2141,30 +2732,35 @@ function HomePage() {
               </span>
             )}
 
-            <Button
-              onClick={onGenerateCards}
-              loading={isGenerating}
-              disabled={
-                selectedWords.length === 0 &&
-                selectedPhrases.length === 0 &&
-                selectedNotes.length === 0
-              }
-              className="gap-2 font-semibold shadow-md w-full sm:w-auto"
-            >
-              <SparklesIcon className="size-4" aria-hidden="true" />
-              Tạo Anki Deck (
-              {mergePhrasesIntoCards
-                ? `~${estimatedCardCount} thẻ dự kiến`
-                : [
-                  selectedWords.length > 0 ? `${selectedWords.length} từ vựng` : '',
-                  selectedPhrases.length > 0 ? `${selectedPhrases.length} cụm từ` : '',
-                  selectedNotes.length > 0 ? `${selectedNotes.length} ghi chú` : '',
-                ]
-                  .filter(Boolean)
-                  .join(', ') || 'Chưa chọn nội dung'}
-              )
-              <ArrowRightIcon className="size-4" aria-hidden="true" />
-            </Button>
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto">
+              <span className="text-xs text-muted-foreground hidden lg:inline">
+                Sử dụng: <strong className="text-foreground">{currentProviderDef.name}</strong> ({currentModel}) • UK
+              </span>
+              <Button
+                onClick={onGenerateCards}
+                loading={isGenerating}
+                disabled={
+                  selectedWords.length === 0 &&
+                  selectedPhrases.length === 0 &&
+                  selectedNotes.length === 0
+                }
+                className="gap-2 font-semibold shadow-md w-full sm:w-auto"
+              >
+                <SparklesIcon className="size-4" aria-hidden="true" />
+                Tạo Anki Deck (
+                {mergePhrasesIntoCards
+                  ? `~${estimatedCardCount} thẻ dự kiến`
+                  : [
+                    selectedWords.length > 0 ? `${selectedWords.length} từ vựng` : '',
+                    selectedPhrases.length > 0 ? `${selectedPhrases.length} cụm từ` : '',
+                    selectedNotes.length > 0 ? `${selectedNotes.length} ghi chú` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(', ') || 'Chưa chọn nội dung'}
+                )
+                <ArrowRightIcon className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -2379,7 +2975,7 @@ function HomePage() {
                             className="gap-1.5 text-xs"
                           >
                             <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
-                            Nghe câu ví dụ ghi chú (US)
+                            Nghe câu ví dụ ghi chú (UK)
                           </Button>
                         </div>
                       )}
@@ -2531,7 +3127,7 @@ function HomePage() {
                           className="gap-1.5 text-xs"
                         >
                           <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
-                          Nghe phát âm từ (US)
+                          Nghe phát âm từ (UK)
                         </Button>
                         <Button
                           variant="secondary"
@@ -2540,7 +3136,7 @@ function HomePage() {
                           className="gap-1.5 text-xs"
                         >
                           <Volume2Icon className="size-3.5 text-primary" aria-hidden="true" />
-                          Nghe câu ví dụ (US)
+                          Nghe câu ví dụ (UK)
                         </Button>
                       </div>
 
@@ -2617,7 +3213,7 @@ function HomePage() {
 
                         <div className="flex flex-col gap-1.5">
                           <label className="text-[0.7rem] font-bold uppercase tracking-wider text-muted-foreground">
-                            Phiên âm (IPA - US)
+                            Phiên âm (IPA - UK)
                           </label>
                           <Input
                             size="sm"
@@ -2722,11 +3318,11 @@ function HomePage() {
                                       variant="ghost"
                                       size="icon"
                                       className="size-7 shrink-0 text-muted-foreground hover:text-primary"
-                                      title="Nghe phát âm chunk (US)"
+                                      title="Nghe phát âm chunk (UK)"
                                       onClick={() =>
                                         playAudio(
                                           chunk.audioUrl ||
-                                            getYoudaoDictVoiceUrl(chunk.text, 2),
+                                          getYoudaoDictVoiceUrl(chunk.text, VOICE_TYPE_UK),
                                         )
                                       }
                                     >
@@ -2750,7 +3346,7 @@ function HomePage() {
                                     />
                                     <Input
                                       size="sm"
-                                      placeholder="IPA (US)"
+                                      placeholder="IPA (UK)"
                                       value={chunk.ipa || ''}
                                       onChange={(e) => {
                                         const newChunks = [...(card.chunks || [])]
@@ -2815,11 +3411,11 @@ function HomePage() {
                                       variant="ghost"
                                       size="icon"
                                       className="size-7 shrink-0 text-muted-foreground hover:text-primary"
-                                      title="Nghe câu ví dụ của chunk (US)"
+                                      title="Nghe câu ví dụ của chunk (UK)"
                                       onClick={() =>
                                         playAudio(
                                           chunk.exampleAudioUrl ||
-                                            getYoudaoDictVoiceUrl(chunk.example!, 2),
+                                          getYoudaoDictVoiceUrl(chunk.example!, VOICE_TYPE_UK),
                                         )
                                       }
                                     >
