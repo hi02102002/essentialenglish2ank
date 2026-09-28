@@ -174,22 +174,24 @@ export const LexicalChunkSchema = z.object({
   text: z
     .string()
     .describe(
-      'Natural high-frequency English lexical chunk, collocation or fixed expression, e.g. "take advantage of", "feel exhausted"',
+      'Natural high-frequency English lexical chunk, collocation or expression directly related to the lesson context, e.g. "shake hands", "nod one\'s head"',
     ),
   ipa: z
     .string()
     .describe(
-      'Standard British English (UK / Received Pronunciation) IPA pronunciation for this chunk enclosed in slashes, e.g. /ˈteɪk ədˈvɑːn.tɪdʒ əv/',
+      'Standard British English (UK / Received Pronunciation) IPA pronunciation for this chunk enclosed in slashes, e.g. /ˈʃeɪk hændz/',
     ),
   meaningVi: z
     .string()
-    .describe('Concise Vietnamese meaning of this chunk, e.g. "tận dụng", "cảm thấy kiệt sức"'),
+    .describe('Concise, natural Vietnamese meaning of this chunk in the lesson context'),
   englishDefinition: z
     .string()
-    .describe('Concise English definition or explanation of how the chunk is used'),
+    .describe('Simple, clear English definition explaining how the chunk is used'),
   example: z
     .string()
-    .describe('A natural example sentence using this specific chunk in British English'),
+    .describe(
+      'A SIMPLE, SHORT, and EASY TO UNDERSTAND example sentence (8-16 words) in British English, strictly set in the context of the lesson theme',
+    ),
   imageQuery: z
     .string()
     .describe('Safe, concrete visual search query without quotes illustrating this chunk'),
@@ -208,8 +210,14 @@ export const FlashcardSchema = z.object({
       'Standard British English (UK / Received Pronunciation) IPA pronunciation enclosed in slashes, e.g. /ˈvaʊ.tʃər/, /ˈʃed.juːl/, /ˈwɔː.tər/',
     ),
   vietnamese: z.string().describe('Vietnamese translation or concise meaning for learners'),
-  englishDefinition: z.string().describe('Original concise English definition, do not copy textbook wording'),
-  example: z.string().describe('Natural example sentence illustrating usage in British English'),
+  englishDefinition: z
+    .string()
+    .describe('Clear, simple, learner-friendly English definition explaining the word in this lesson theme'),
+  example: z
+    .string()
+    .describe(
+      'A SIMPLE, CLEAR, and EASY TO UNDERSTAND example sentence (8-16 words) in British English, directly illustrating the word in the context of the lesson theme',
+    ),
   imageQuery: z.string().describe('Safe, concrete visual search query without quotes'),
   partOfSpeech: z
     .string()
@@ -219,7 +227,7 @@ export const FlashcardSchema = z.object({
   chunks: z
     .array(LexicalChunkSchema)
     .describe(
-      '1 to 2 high-frequency lexical chunks or collocations using this word, each with its own UK IPA, Vietnamese meaning, English definition, and example sentence',
+      '1 to 2 high-frequency lexical chunks using this word in the lesson context, each with UK IPA, Vietnamese meaning, simple English definition, and a simple contextual example sentence',
     ),
 })
 
@@ -393,14 +401,24 @@ async function enrichVocabularyBatch(
     phrasesToInclude.length > 0
       ? `\nKey Lesson Collocations & Phrases to integrate:\n${phrasesToInclude.join(', ')}\n`
       : ''
-  const userPrompt = `Create rich, engaging flashcards for the following items preserving exact item order.${topicContext}${phrasesContext}
-MANDATORY DIVERSITY & ANTI-REPETITION RULES:
-1. SCENARIO & SUBJECT VARIETY: Each card in this batch MUST feature a completely distinct, relatable scenario and subject. Do NOT repeat sentence openers. Do NOT start consecutive sentences with "She" or "He". Use a rich mix of subjects (e.g. "I", "we", "my flatmate", "commuters", "the flight attendant", "local residents", "the barista", "the doctor", "travelers").
-2. SENTENCE STRUCTURE VARIETY: Avoid formulaic patterns like "[Subject] [verb]ed [object] because [reason]". Use diverse structures (temporal openers: "On busy weekday mornings...", conditional clauses: "If you want to...", dialogue quotes: "'Don't forget to...', she reminded me", compound sentences with coordinating conjunctions).
-3. LEXICAL CHUNKS INTEGRATION & CONTRAST:
-   - For each word, check if any phrase from the "Key Lesson Collocations & Phrases" above naturally uses or collocates with this word. If so, PRIORITIZE selecting it as a chunk for this word and generate its accurate UK IPA, Vietnamese meaning, English definition, and example sentence.
-   - The 1 to 2 lexical chunks for each word MUST be distinct in type and function. NEVER provide redundant pairs like "take a bath" and "have a bath". Instead, pick 1 strong collocation (e.g. "run a warm bath") and 1 conversational expression, phrasal verb, or idiom (e.g. "soak in the tub").
-4. VIVID PHOTOGRAPHIC IMAGE QUERIES: Describe clear, high-resolution, atmospheric photography scenes suitable for image search (e.g. "steaming ceramic coffee mug on rustic wooden table morning sunlight photography"). Avoid generic "person doing X".
+  const userPrompt = `Create clear, natural, and memorable flashcards for the following items preserving exact item order.${topicContext}${phrasesContext}
+MANDATORY RULES FOR EXAMPLES & LESSON CONTEXT:
+1. STRICT LESSON THEME RELEVANCE (QUAN TRỌNG):
+   - Every single example sentence MUST directly reflect the Lesson Theme / Context: "${topic || 'English in Use'}".
+   - If the lesson is about "The body and movement", every example must describe body parts, physical movements, postures, gestures, or sensations (e.g. nodding head, bending down, aching back, touching toes, smiling, waving).
+   - If the lesson is about travel, food, feelings, or jobs, strictly illustrate situations directly in that specific topic. Do NOT invent unrelated, random contexts.
+2. SIMPLE, CLEAR & EASY TO UNDERSTAND (DỄ HIỂU & NGẮN GỌN):
+   - Keep sentences clean, natural, and concise (ideally 8 to 16 words).
+   - Use straightforward everyday vocabulary (CEFR A2–B1 level) so the learner can easily understand 100% of the sentence.
+   - The sentence must clearly illuminate the exact meaning of the target word/chunk so the learner immediately grasps it from context.
+   - Avoid long, complicated, multi-clause sentences or rare literary words.
+3. AUTHENTIC BRITISH ENGLISH (UK):
+   - Natural British English phrasing and vocabulary (e.g. "flat", "holiday", "have a bath", "trousers", "biscuit", "chemist's").
+4. NATURAL LEXICAL CHUNKS:
+   - For each word, prioritize selecting high-frequency chunks/collocations from the lesson.
+   - The example sentence for each chunk must also be simple, short, and directly grounded in the lesson theme.
+5. VIVID PHOTOGRAPHIC IMAGE QUERIES:
+   - Describe a clear, realistic photography scene without quotes illustrating the word in this lesson's context.
 
 Items to process:
 ${words.map((word, i) => `${i + 1}. ${word}`).join('\n')}`
@@ -529,30 +547,30 @@ export async function enrichVocabulary(
     ...OPENAI_CLIENT_OPTIONS,
   })
 
-  const systemPrompt = `You are an expert bilingual English lexicographer and pedagogue creating rich, memorable English vocabulary flashcards with British English (UK) pronunciation and authentic usage for Vietnamese learners.
+  const systemPrompt = `You are an expert bilingual English lexicographer and pedagogue creating clean, memorable English vocabulary flashcards with British English (UK) pronunciation and authentic usage for Vietnamese learners.
 
-CORE PRINCIPLES & DIVERSITY MANDATES:
-1. ANTI-REPETITION & VARIETY (CRITICAL):
-   - Never generate monotonous, cookie-cutter sentence formulas.
-   - Do NOT start sentences repeatedly with "She..." or "He...". Use diverse perspectives: first-person ("I / We"), realistic third-person agents ("the barista", "commuters", "our tour guide", "my flatmate", "passengers"), second-person advice ("When you...", "Make sure to..."), or situational openers ("After an exhausting shift...", "On chilly autumn mornings...").
-   - Mix sentence types: complex sentences with subordinate clauses, natural conversational quotes, and vivid real-life scenes.
-2. LEXICAL CHUNKS DIVERSITY:
-   - For each word/phrase, provide 1 to 2 high-frequency, authentic lexical chunks showing how native speakers naturally use this word in British English.
-   - NO REDUNDANCY: Never supply two nearly identical chunks (e.g. NEVER give both "take a bath" and "have a bath"; NEVER give both "go to sleep" and "fall asleep").
-   - Prefer contrasting categories: strong collocations (Verb + Noun, Adj + Noun, e.g. "strike a balance", "hectic schedule", "have a bath"), phrasal verbs, idioms, or situational phrases (e.g. "sleep in", "at the crack of dawn", "in a hurry").
-   - Each chunk MUST have its own accurate British English (UK / Received Pronunciation) IPA, natural Vietnamese translation, concise English usage explanation, and contextual example sentence.
+CORE PRINCIPLES & GUIDELINES:
+1. SIMPLE, EASY-TO-UNDERSTAND & CONTEXTUAL EXAMPLES (CRITICAL):
+   - Every example sentence MUST be SIMPLE, CLEAR, and DIRECTLY ROOTED in the specific lesson theme/topic (e.g. if the lesson is "The body and movement", illustrate body movements, gestures, postures, or physical sensations like nodding, bending down, aching back, touching toes).
+   - Keep sentences concise, natural, and punchy (ideally 8 to 16 words).
+   - Use straightforward everyday vocabulary (A2–B1 CEFR level) so the learner focuses effortlessly on the target word without stumbling over other words.
+   - The example sentence must make the meaning of the target word/chunk immediately obvious from context.
+   - Avoid long, convoluted, compound-complex sentences or literary jargon.
+2. LESSON-RELEVANT LEXICAL CHUNKS:
+   - For each word/phrase, provide 1 to 2 high-frequency, authentic lexical chunks showing how native British speakers naturally use this word in the lesson's context.
+   - NO REDUNDANCY: Never supply two nearly identical chunks (e.g. NEVER give both "take a bath" and "have a bath").
+   - Each chunk MUST have its own accurate UK IPA (/.../), natural Vietnamese translation, concise English usage explanation, and a short, simple example sentence (8-16 words) in the lesson context.
 3. LEARNER-FRIENDLY ENGLISH DEFINITIONS:
-   - Write in the style of Oxford Advanced Learner's Dictionary / Cambridge Dictionary: clear, conversational, engaging, explaining how and when the word is used.
-   - Avoid dry, circular robotic boilerplate like "the act of...", "a time when you wash your body", "a device used for...".
+   - Write in the style of Oxford Advanced Learner's Dictionary / Cambridge Dictionary: clear, conversational, explaining how and when the word is used in this topic.
+   - Avoid dry, circular robotic boilerplate like "the act of...", "a device used for...".
 4. IDIOMATIC VIETNAMESE (TỰ NHIÊN, CHUẨN XÁC):
    - Translate into natural, idiomatic Vietnamese that reflects actual everyday speech and modern usage.
-   - Include common collocations or usage notes in parentheses where helpful (e.g. "bồn tắm; việc tắm bồn / ngâm mình"). Avoid literal, clunky machine translation.
+   - Include common collocations or usage notes in parentheses where helpful (e.g. "bồn tắm; việc tắm bồn / ngâm mình").
 5. BRITISH ENGLISH (UK) IPA & SPELLING:
-   - Use standard British English (Received Pronunciation - RP) IPA transcription enclosed in slashes (e.g. non-rhotic, British vowels like /ɒ/, /ɑː/, /əʊ/, e.g. /ˈwɔː.tər/, /ˈʃed.juːl/, /ˈvaʊ.tʃər/).
+   - Use standard British English (Received Pronunciation - RP) IPA transcription enclosed in slashes (e.g. /ˈwɔː.tər/, /ˈʃed.juːl/, /ˈvaʊ.tʃər/).
    - Prefer British English spelling and natural UK phrasing where applicable.
 6. PHOTOGRAPHY IMAGE QUERIES:
-   - Write concrete visual descriptions with atmospheric, photographic keywords (lighting, setting, composition) suitable for search engines.
-   - Avoid generic phrases like "person doing X" or "man holding Y". No quotation marks.
+   - Write concrete visual descriptions with atmospheric photography keywords suitable for search engines. No quotation marks.
 
 You MUST return ONLY valid JSON matching this exact JSON schema: {"cards": [{"word": string, "ipa": string, "vietnamese": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string, "chunks": [{"text": string, "ipa": string, "meaningVi": string, "englishDefinition": string, "example": string, "imageQuery": string, "partOfSpeech": string}]}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
 
@@ -602,7 +620,11 @@ export const NoteSchema = z.object({
   title: z.string().describe('Clear topic title for this note or rule, e.g. "Body movement expressions"'),
   content: z.array(z.string()).describe('List of key expressions, phrases, or bullet rules'),
   vietnameseExplanation: z.string().describe('Concise explanation in Vietnamese of usage and meaning for learners'),
-  example: z.string().describe('A natural, practical example sentence demonstrating the usage in context'),
+  example: z
+    .string()
+    .describe(
+      'A simple, clear, and practical example sentence (8-16 words) in British English demonstrating the rule in the lesson context',
+    ),
 })
 
 export const NotesOutputSchema = z.object({
@@ -629,8 +651,8 @@ GUIDELINES:
 - Distill key grammatical formulas/forms (e.g. S + am/is/are + V-ing), collocations, structural patterns, and usage rules into crisp, memorable bullet points.
 - For grammar rules or contrastive notes (e.g. "not ..."): clearly highlight the exact formula (Form), when to use vs. when NOT to use, and common learner pitfalls.
 - For practice exercises, preserve key example problems with bracketed answers [answer].
-- vietnameseExplanation: Clear, engaging explanation in natural Vietnamese explaining WHEN, WHY, and HOW native speakers use these structures/patterns in real life, with nuanced contrast.
-- example: A realistic, memorable contextual example sentence in British English bringing the rule to life. Avoid generic, monotonous templates.
+- vietnameseExplanation: Clear, engaging explanation in natural Vietnamese explaining WHEN, WHY, and HOW native speakers use these structures/patterns in real life.
+- example: A SIMPLE, CLEAR, and practical example sentence in British English (8-16 words) directly illustrating the rule or pattern in an everyday, relatable context. Keep the vocabulary accessible (A2-B1 level) so learners can immediately grasp how the rule works.
 
 You MUST return ONLY valid JSON matching this exact JSON schema: {"notes": [{"title": string, "content": string[], "vietnameseExplanation": string, "example": string}]}. Do not omit any key. Do not output markdown code fences or explanatory text.`
 
@@ -713,9 +735,13 @@ export const StandaloneChunkSchema = z.object({
     .string()
     .describe('The lexical chunk or expression, e.g. "take advantage of", "breathe in and out"'),
   ipa: z.string().describe('Standard British English (UK / Received Pronunciation) IPA pronunciation'),
-  vietnamese: z.string().describe('Vietnamese translation or meaning'),
-  englishDefinition: z.string().describe('Concise English definition'),
-  example: z.string().describe('Natural example sentence using this chunk in British English'),
+  vietnamese: z.string().describe('Vietnamese translation or meaning in this lesson context'),
+  englishDefinition: z.string().describe('Simple, clear English definition'),
+  example: z
+    .string()
+    .describe(
+      'A simple, clear, and natural example sentence (8-16 words) in British English directly illustrating the chunk in the lesson context',
+    ),
   imageQuery: z.string().describe('Safe, concrete visual search query'),
   partOfSpeech: z.string().describe('Part of speech, e.g. "phrase", "phrasal verb", or "idiom"'),
 })
@@ -740,19 +766,20 @@ export async function generateLessonChunks(
 
   const systemPrompt = `You are an expert English teacher specialized in Lexical Chunking methodology. From the provided vocabulary list, lesson theme, and context, generate 6 to 12 high-yield, authentic Lexical Chunks with British English (UK) usage and pronunciation.
 
-CRITICAL DIVERSITY & QUALITY RULES:
-1. CATEGORY DIVERSITY: Do NOT generate chunks that all follow the same pattern (e.g. avoid generating 6 chunks that all start with "take a..." or "have a..."). Balance across diverse categories:
-   - Strong Collocations: Verb + Noun ("run a warm bath", "set an alarm", "strike a deal"), Adj + Noun ("sound sleep", "tight schedule", "heavy traffic")
-   - Phrasal Verbs & Verb Phrases ("drift off", "freshen up", "fall behind", "catch up on")
-   - Prepositional & Adverbial Phrases ("in a hurry", "at the crack of dawn", "day in and day out")
-   - Conversational Gambits & Spoken Idioms ("call it a day", "if you ask me", "as a matter of fact")
-2. ANTI-REPETITION IN EXAMPLES:
-   - Each chunk's example sentence MUST depict a different realistic scene.
-   - Avoid monotonous "She/He..." openings. Use diverse subjects ("I", "we", "my coworkers", "travelers", "local students"), conditional sentences ("When you...", "If you..."), and natural dialogues.
-3. IDIOMATIC VIETNAMESE:
-   - Provide natural, fluent Vietnamese meanings that capture the real pragmatic nuance, not robotic word-for-word translations.
-4. SPECIFIC PHOTOGRAPHIC IMAGE QUERIES:
-   - Describe high-quality, realistic photography scenes with atmosphere and setting details instead of generic "person doing X". No quotes.
+CRITICAL RULES FOR CHUNKS & EXAMPLES:
+1. STRICT LESSON THEME RELEVANCE (QUAN TRỌNG):
+   - Every chunk and its example sentence MUST be tightly focused on the Lesson Theme / Topic.
+   - If the lesson is about the body, use actions, expressions, gestures, and sensations directly related to the body.
+2. SIMPLE, CLEAR & EASY TO UNDERSTAND EXAMPLES (DỄ HIỂU & NGẮN GỌN):
+   - Each example sentence MUST be simple, short (8 to 16 words), and easy to understand for everyday learners (A2-B1 level).
+   - Use straightforward vocabulary so learners immediately grasp how native speakers use this chunk in context.
+   - Avoid long, convoluted, or abstract sentence structures.
+3. CATEGORY DIVERSITY:
+   - Strong Collocations: Verb + Noun ("nod one's head", "blow one's nose", "take a deep breath"), Adj + Noun ("sore throat", "sharp pain")
+   - Phrasal Verbs & Verb Phrases ("bend down", "stand up", "lie down")
+   - Conversational & Prepositional Phrases ("on one's feet", "from head to toe")
+4. IDIOMATIC VIETNAMESE:
+   - Provide natural, fluent Vietnamese meanings that capture the real pragmatic nuance.
 5. BRITISH ENGLISH (UK) IPA:
    - Standard British English (UK / Received Pronunciation) IPA transcription enclosed in slashes.
 
